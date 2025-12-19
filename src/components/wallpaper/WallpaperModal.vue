@@ -28,8 +28,20 @@ watch(() => props.wallpaper, () => {
   actualDimensions.value = { width: 0, height: 0 }
 })
 
-// 质量标签（根据新数据结构或文件大小）
-const quality = computed(() => props.wallpaper?.quality || getSizeLabel(props.wallpaper?.size)?.label || '高清')
+// 质量标签（基于真实分辨率动态计算）
+const quality = computed(() => {
+  // 如果有真实尺寸，基于真实分辨率计算质量
+  if (actualDimensions.value.width > 0) {
+    const w = actualDimensions.value.width
+    const h = actualDimensions.value.height
+    if (w >= 3840 || h >= 2160) return '超清'
+    if (w >= 2560 || h >= 1440) return '4K'
+    if (w >= 1920 || h >= 1080) return '高清'
+    return '标清'
+  }
+  // 未加载时使用 JSON 中的值
+  return props.wallpaper?.quality || getSizeLabel(props.wallpaper?.size)?.label || '高清'
+})
 const qualityType = computed(() => {
   switch (quality.value) {
     case '超清': return 'warning'
@@ -39,12 +51,9 @@ const qualityType = computed(() => {
   }
 })
 
-// 分辨率信息
+// 分辨率信息 - 优先使用图片加载后的真实尺寸
 const resolution = computed(() => {
-  if (props.wallpaper?.resolution) {
-    return props.wallpaper.resolution
-  }
-  // 如果有实际尺寸，使用实际尺寸
+  // 优先使用图片加载后获取的真实尺寸
   if (actualDimensions.value.width > 0) {
     const w = actualDimensions.value.width
     const h = actualDimensions.value.height
@@ -53,6 +62,10 @@ const resolution = computed(() => {
     else if (w >= 2560 || h >= 1440) label = '2K'
     else if (w >= 1920 || h >= 1080) label = '1080P'
     return { width: w, height: h, label }
+  }
+  // 图片未加载时，使用 JSON 中的估算值
+  if (props.wallpaper?.resolution) {
+    return props.wallpaper.resolution
   }
   return { label: '1080P' }
 })
