@@ -2,7 +2,7 @@
 import { gsap } from 'gsap'
 import { computed, onMounted, ref } from 'vue'
 import { IMAGE_PROXY } from '@/utils/constants'
-import { formatFileSize, highlightText } from '@/utils/format'
+import { formatFileSize, getDisplayFilename, highlightText } from '@/utils/format'
 
 const props = defineProps({
   wallpaper: {
@@ -45,9 +45,12 @@ const fileFormat = computed(() => {
   return ext
 })
 
-// 高亮文件名
+// 显示用的文件名（去除分类前缀）
+const displayFilename = computed(() => getDisplayFilename(props.wallpaper.filename))
+
+// 高亮文件名（对显示名称进行高亮）
 const highlightedFilename = computed(() => {
-  return highlightText(props.wallpaper.filename, props.searchQuery)
+  return highlightText(displayFilename.value, props.searchQuery)
 })
 
 // GSAP 入场动画
@@ -200,7 +203,7 @@ function handleMouseLeave(e) {
 
     <!-- Card Info -->
     <div class="card-info">
-      <p class="card-filename" :title="wallpaper.filename">
+      <p class="card-filename" :title="displayFilename">
         <template v-for="(part, idx) in highlightedFilename" :key="idx">
           <span v-if="part.highlight" class="highlight">{{ part.text }}</span>
           <span v-else>{{ part.text }}</span>

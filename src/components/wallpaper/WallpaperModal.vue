@@ -2,7 +2,7 @@
 import { gsap } from 'gsap'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import { downloadFile, formatDate, formatFileSize, formatRelativeTime, getFileExtension, getResolutionLabel } from '@/utils/format'
+import { downloadFile, formatDate, formatFileSize, formatRelativeTime, getDisplayFilename, getFileExtension, getResolutionLabel } from '@/utils/format'
 
 const props = defineProps({
   wallpaper: {
@@ -125,6 +125,7 @@ const fileExt = computed(() => props.wallpaper ? getFileExtension(props.wallpape
 const formattedSize = computed(() => props.wallpaper ? formatFileSize(props.wallpaper.size) : '')
 const formattedDate = computed(() => props.wallpaper ? formatDate(props.wallpaper.createdAt) : '')
 const relativeTime = computed(() => props.wallpaper ? formatRelativeTime(props.wallpaper.createdAt) : '')
+const displayFilename = computed(() => props.wallpaper ? getDisplayFilename(props.wallpaper.filename) : '')
 
 // Handlers
 function handleImageLoad(e) {
@@ -274,7 +275,7 @@ onUnmounted(() => {
           <template v-else>
             <div class="info-header">
               <h3 class="info-title">
-                {{ wallpaper.filename }}
+                {{ displayFilename }}
               </h3>
               <div class="info-tags">
                 <span class="tag" :class="[`tag--${resolution.type || 'success'}`]">{{ resolution.label }}</span>
