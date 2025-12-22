@@ -4,7 +4,7 @@
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-export function usePagination(items, pageSize = 20) {
+export function usePagination(items, pageSize = 30) {
   const currentPage = ref(1)
   const isLoading = ref(false)
   const observerTarget = ref(null)
@@ -20,17 +20,13 @@ export function usePagination(items, pageSize = 20) {
     return displayedItems.value.length < items.value.length
   })
 
-  // 加载更多 - 立即加载，无需延迟
+  // 加载更多 - 同步立即加载，无延迟
   const loadMore = () => {
-    if (isLoading.value || !hasMore.value)
+    if (!hasMore.value)
       return
 
-    isLoading.value = true
-    // 使用 nextTick 确保 DOM 更新后再重置状态
+    // 直接增加页数，同步更新
     currentPage.value++
-    nextTick(() => {
-      isLoading.value = false
-    })
   }
 
   // 重置分页（当筛选条件变化时）
@@ -55,13 +51,13 @@ export function usePagination(items, pageSize = 20) {
 
     observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore.value && !isLoading.value) {
+        if (entries[0].isIntersecting && hasMore.value) {
           loadMore()
         }
       },
       {
-        // 增加预加载距离，提前 300px 开始加载
-        rootMargin: '300px',
+        // 增加预加载距离到 800px，快速滚动也能及时加载
+        rootMargin: '800px',
         threshold: 0,
       },
     )
