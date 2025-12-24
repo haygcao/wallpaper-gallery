@@ -4,7 +4,7 @@
 
 // CDN 版本号（更新图片后在图床仓库创建新 tag，然后修改此值）
 // jsdelivr 缓存策略：@main 分支有缓存，@tag 版本无缓存
-export const CDN_VERSION = 'v1.0.3'
+export const CDN_VERSION = 'v1.0.4'
 
 // CDN URL 动态构建（防止静态分析提取完整链接）
 const _cdnParts = {
