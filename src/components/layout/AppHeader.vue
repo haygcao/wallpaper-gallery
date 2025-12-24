@@ -1,6 +1,6 @@
 <script setup>
 import { gsap } from 'gsap'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SearchBar from '@/components/common/SearchBar.vue'
 import { useDevice } from '@/composables/useDevice'
@@ -29,6 +29,53 @@ const isSeriesActive = computed(() => (seriesId) => {
     return currentPath === '/desktop'
   }
   return currentPath === `/${seriesId}`
+})
+
+// 导航滑块相关
+const navRef = ref(null)
+const navSliderStyle = ref({})
+
+// 获取当前激活的系列ID
+const activeSeriesId = computed(() => {
+  for (const option of availableSeriesOptions.value) {
+    if (isSeriesActive.value(option.id))
+      return option.id
+  }
+  return 'desktop'
+})
+
+// 更新滑块位置
+async function updateNavSliderPosition() {
+  await nextTick()
+  if (!navRef.value || isMobile.value)
+    return
+  const activeLink = navRef.value.querySelector('.nav-link.is-active')
+  if (activeLink) {
+    const navRect = navRef.value.getBoundingClientRect()
+    const linkRect = activeLink.getBoundingClientRect()
+    navSliderStyle.value = {
+      width: `${linkRect.width}px`,
+      transform: `translateX(${linkRect.left - navRect.left - 4}px)`,
+    }
+  }
+}
+
+// 监听变化
+watch(activeSeriesId, updateNavSliderPosition)
+watch(() => route.path, updateNavSliderPosition)
+
+// 处理窗口大小变化
+function handleResize() {
+  updateNavSliderPosition()
+}
+
+onMounted(() => {
+  updateNavSliderPosition()
+  window.addEventListener('resize', handleResize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
 })
 
 // 获取系列对应的路由路径
@@ -155,7 +202,9 @@ function closeSearch() {
       </div>
 
       <!-- PC 端系列导航 -->
-      <nav v-if="!isMobile" class="header-nav">
+      <nav v-if="!isMobile" ref="navRef" class="header-nav">
+        <!-- 滑块背景 -->
+        <div class="nav-slider" :style="navSliderStyle" />
         <router-link
           v-for="option in availableSeriesOptions"
           :key="option.id"
@@ -503,6 +552,25 @@ function closeSearch() {
   align-items: center;
   gap: $spacing-xs;
   margin-left: $spacing-xl;
+  position: relative;
+  padding: 4px;
+  background: var(--color-bg-hover);
+  border-radius: $radius-lg;
+}
+
+// 导航滑块
+.nav-slider {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  height: calc(100% - 8px);
+  background: var(--color-bg-card);
+  border-radius: $radius-md;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition:
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
 }
 
 .nav-link {
@@ -515,7 +583,10 @@ function closeSearch() {
   color: var(--color-text-secondary);
   text-decoration: none;
   border-radius: $radius-md;
-  transition: all var(--transition-fast);
+  transition: color var(--transition-fast);
+  position: relative;
+  z-index: 1;
+  background: transparent;
 
   svg {
     width: 18px;
@@ -524,14 +595,11 @@ function closeSearch() {
 
   &:hover {
     color: var(--color-text-primary);
-    background: var(--color-bg-hover);
   }
 
   &.is-active,
   &.router-link-active {
     color: var(--color-accent);
-    background: var(--color-accent-light);
-    font-weight: $font-weight-semibold;
   }
 }
 

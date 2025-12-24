@@ -97,9 +97,9 @@ onMounted(() => {
 <template>
   <div class="home-page">
     <div class="container">
-      <!-- Today's Pick -->
+      <!-- Today's Pick - 仅电脑壁纸系列显示 -->
       <TodayPick
-        v-if="wallpapers.length > 0 && !loading"
+        v-if="wallpapers.length > 0 && !loading && currentSeries === 'desktop'"
         :wallpapers="wallpapers"
         @select="handleSelectWallpaper"
       />

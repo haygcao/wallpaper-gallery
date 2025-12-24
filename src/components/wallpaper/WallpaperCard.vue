@@ -21,6 +21,10 @@ const props = defineProps({
     type: String,
     default: 'grid',
   },
+  aspectRatio: {
+    type: String,
+    default: '16/10',
+  },
 })
 
 const emit = defineEmits(['click'])
@@ -51,6 +55,24 @@ const displayFilename = computed(() => getDisplayFilename(props.wallpaper.filena
 // 高亮文件名（对显示名称进行高亮）
 const highlightedFilename = computed(() => {
   return highlightText(displayFilename.value, props.searchQuery)
+})
+
+// 计算卡片图片样式 - 动态宽高比
+const cardImageStyle = computed(() => {
+  if (props.viewMode === 'masonry')
+    return {} // 瀑布流不固定比例
+  return { aspectRatio: props.aspectRatio.replace('/', ' / ') }
+})
+
+// 列表视图图片样式
+const listImageStyle = computed(() => {
+  const [w, h] = props.aspectRatio.split('/').map(Number)
+  const ratio = w / h
+  const baseWidth = ratio >= 1 ? 180 : 100 // 竖屏用窄宽度
+  return {
+    width: `${baseWidth}px`,
+    aspectRatio: props.aspectRatio.replace('/', ' / '),
+  }
 })
 
 function handleImageLoad() {
@@ -140,7 +162,7 @@ function handleMouseLeave(e) {
     @mouseleave="handleMouseLeave"
   >
     <!-- Image Container -->
-    <div class="card-image">
+    <div class="card-image" :style="viewMode === 'list' ? listImageStyle : cardImageStyle">
       <!-- Skeleton 骨架屏 -->
       <div v-if="!imageLoaded" class="image-skeleton">
         <div class="skeleton-shimmer" />
@@ -218,7 +240,6 @@ function handleMouseLeave(e) {
 
 .card-image {
   position: relative;
-  aspect-ratio: 16 / 10;
   overflow: hidden;
   background: var(--color-bg-hover);
 
@@ -381,11 +402,10 @@ function handleMouseLeave(e) {
 
   .card-image {
     flex-shrink: 0;
-    width: 180px;
-    aspect-ratio: 16 / 10;
+    // width 和 aspect-ratio 由 listImageStyle 动态控制
 
     @include mobile-only {
-      width: 120px;
+      // 移动端缩小宽度由 listImageStyle 处理
     }
   }
 

@@ -68,6 +68,17 @@ const currentSeriesName = computed(() => {
   return currentSeriesConfig.value?.name || '壁纸'
 })
 
+// 计算比例类型（用于优化瀑布流列数）
+const aspectType = computed(() => {
+  const ratio = currentSeriesConfig.value?.aspectRatio || '16/10'
+  const [w, h] = ratio.split('/').map(Number)
+  if (w < h)
+    return 'portrait' // 竖屏
+  if (w === h)
+    return 'square' // 正方形
+  return 'landscape'
+})
+
 // 获取其他可用系列（用于快捷跳转）
 const alternativeSeries = computed(() => {
   return availableSeriesOptions.value.filter(opt => opt.id !== currentSeries.value)
@@ -339,7 +350,7 @@ function handleSelect(wallpaper) {
       <div
         ref="gridRef"
         class="wallpaper-grid"
-        :class="[`view-${displayViewMode}`, { 'is-hidden': !showGrid, 'is-animating': isAnimating }]"
+        :class="[`view-${displayViewMode}`, `aspect-${aspectType}`, { 'is-hidden': !showGrid, 'is-animating': isAnimating }]"
       >
         <WallpaperCard
           v-for="(wallpaper, index) in displayedItems"
@@ -348,6 +359,7 @@ function handleSelect(wallpaper) {
           :index="index"
           :search-query="searchQuery"
           :view-mode="displayViewMode"
+          :aspect-ratio="currentSeriesConfig?.aspectRatio || '16/10'"
           @click="handleSelect"
         />
       </div>
@@ -431,6 +443,42 @@ function handleSelect(wallpaper) {
     > * {
       break-inside: avoid;
       margin-bottom: calc(var(--grid-gap) * 1.2);
+    }
+  }
+
+  // 竖屏壁纸瀑布流需要更多列
+  &.view-masonry.aspect-portrait {
+    column-count: 3;
+
+    @include respond-to('md') {
+      column-count: 4;
+    }
+
+    @include respond-to('lg') {
+      column-count: 5;
+    }
+
+    @include respond-to('xl') {
+      column-count: 6;
+    }
+  }
+
+  // 正方形壁纸（头像）网格优化
+  &.view-grid.aspect-square {
+    @include respond-to('sm') {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    @include respond-to('md') {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    @include respond-to('lg') {
+      grid-template-columns: repeat(5, 1fr);
+    }
+
+    @include respond-to('xl') {
+      grid-template-columns: repeat(6, 1fr);
     }
   }
 }

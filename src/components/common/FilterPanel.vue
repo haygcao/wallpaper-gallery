@@ -253,13 +253,54 @@ function resetFilters() {
       </div>
     </div>
 
-    <!-- 移动端筛选按钮 -->
+    <!-- 移动端视图切换 + 筛选按钮 -->
     <div v-else class="filter-right-mobile">
-      <button class="filter-btn" @click="openFilterPopup">
+      <!-- 视图模式切换 - 即时生效 -->
+      <div class="view-mode-toggle-mobile">
+        <div class="view-mode-slider-mobile" :class="viewModeSliderPosition" />
+        <button
+          class="view-mode-btn-mobile"
+          :class="{ 'is-active': viewMode === 'grid' }"
+          aria-label="网格视图"
+          @click="setViewMode('grid')"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+          </svg>
+        </button>
+        <button
+          class="view-mode-btn-mobile"
+          :class="{ 'is-active': viewMode === 'list' }"
+          aria-label="列表视图"
+          @click="setViewMode('list')"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+          </svg>
+        </button>
+        <button
+          class="view-mode-btn-mobile"
+          :class="{ 'is-active': viewMode === 'masonry' }"
+          aria-label="瀑布流视图"
+          @click="setViewMode('masonry')"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="10" />
+            <rect x="14" y="3" width="7" height="6" />
+            <rect x="3" y="16" width="7" height="5" />
+            <rect x="14" y="12" width="7" height="9" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- 筛选按钮 (紧凑) -->
+      <button class="filter-btn filter-btn-compact" @click="openFilterPopup">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
         </svg>
-        筛选
         <span v-if="activeFilterCount > 0" class="filter-badge">{{ activeFilterCount }}</span>
       </button>
     </div>
@@ -291,51 +332,6 @@ function resetFilters() {
 
           <!-- 筛选选项 -->
           <div class="popup-body">
-            <!-- 视图模式 -->
-            <div class="filter-group">
-              <h3 class="group-title">
-                视图
-              </h3>
-              <div class="option-grid view-mode-grid">
-                <button
-                  class="option-btn view-option"
-                  :class="{ 'is-active': tempViewMode === 'grid' }"
-                  @click="tempViewMode = 'grid'"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="7" height="7" />
-                    <rect x="14" y="3" width="7" height="7" />
-                    <rect x="3" y="14" width="7" height="7" />
-                    <rect x="14" y="14" width="7" height="7" />
-                  </svg>
-                  <span>网格</span>
-                </button>
-                <button
-                  class="option-btn view-option"
-                  :class="{ 'is-active': tempViewMode === 'list' }"
-                  @click="tempViewMode = 'list'"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-                  </svg>
-                  <span>列表</span>
-                </button>
-                <button
-                  class="option-btn view-option"
-                  :class="{ 'is-active': tempViewMode === 'masonry' }"
-                  @click="tempViewMode = 'masonry'"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="7" height="10" />
-                    <rect x="14" y="3" width="7" height="6" />
-                    <rect x="3" y="16" width="7" height="5" />
-                    <rect x="14" y="12" width="7" height="9" />
-                  </svg>
-                  <span>瀑布流</span>
-                </button>
-              </div>
-            </div>
-
             <!-- 分类 -->
             <div class="filter-group">
               <h3 class="group-title">
@@ -572,6 +568,74 @@ function resetFilters() {
 .filter-right-mobile {
   display: flex;
   align-items: center;
+  gap: $spacing-sm;
+}
+
+// 移动端视图模式切换
+.view-mode-toggle-mobile {
+  display: flex;
+  align-items: center;
+  background: var(--color-bg-hover);
+  border-radius: $radius-sm;
+  padding: 2px;
+  position: relative;
+  height: 32px;
+}
+
+.view-mode-slider-mobile {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 28px;
+  height: 28px;
+  background: var(--color-bg-card);
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+
+  &.is-list {
+    transform: translateX(28px);
+  }
+
+  &.is-masonry {
+    transform: translateX(56px);
+  }
+}
+
+.view-mode-btn-mobile {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  color: var(--color-text-muted);
+  transition: color 0.2s ease;
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  &.is-active {
+    color: var(--color-accent);
+  }
+}
+
+// 紧凑版筛选按钮
+.filter-btn-compact {
+  padding: 6px 10px;
+  min-width: 36px;
+  height: 32px;
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 .filter-btn {
