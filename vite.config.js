@@ -47,7 +47,7 @@ export default defineConfig({
       ],
     }),
   ].filter(Boolean),
-  base: '/wallpaper-gallery/',
+  base: '/', // 子域名部署使用根路径
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
