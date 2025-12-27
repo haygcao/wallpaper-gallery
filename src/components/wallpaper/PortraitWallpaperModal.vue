@@ -438,12 +438,13 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex: 1;
-  min-height: 300px;
+  min-height: 60vh; // 竖屏壁纸需要更大的初始高度,避免加载后弹窗突然变大
   max-height: 70vh;
   background: var(--color-bg-primary);
   overflow: hidden;
 
   @include mobile-only {
+    min-height: 55vh; // 移动端稍小一些
     max-height: 65vh;
   }
 }

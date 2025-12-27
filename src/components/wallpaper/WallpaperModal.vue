@@ -667,7 +667,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex: 1;
-  min-height: 200px;
+  min-height: 300px; // 增加移动端初始高度，避免图片加载后弹窗突然变大
   max-height: 60vh; // 移动端限制图片区域高度，增大显示空间
   background: var(--color-bg-primary);
   overflow: hidden;
