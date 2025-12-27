@@ -520,3 +520,13 @@ body.fullscreen-mode {
     transform: translateX(-50%) translateY(-10px);
   }
 }
+
+// ========================================
+// 分类级联选择器样式
+// ========================================
+.category-cascader-popper {
+  // 隐藏单选框按钮
+  .el-radio {
+    display: none !important;
+  }
+}

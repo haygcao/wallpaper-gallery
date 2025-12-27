@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import MobileCategoryDrawer from '@/components/common/MobileCategoryDrawer.vue'
 import { useDevice } from '@/composables/useDevice'
 import { useViewMode } from '@/composables/useViewMode'
 import { trackFilter } from '@/utils/analytics'
@@ -18,9 +19,18 @@ const props = defineProps({
     type: String,
     default: 'all',
   },
+  subcategoryFilter: {
+    type: String,
+    default: 'all',
+  },
   categoryOptions: {
     type: Array,
     default: () => [{ value: 'all', label: '全部分类' }],
+  },
+  // 二级分类选项（根据当前一级分类动态变化）
+  subcategoryOptions: {
+    type: Array,
+    default: () => [{ value: 'all', label: '全部' }],
   },
   resultCount: {
     type: Number,
@@ -36,23 +46,53 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['update:sortBy', 'update:formatFilter', 'update:categoryFilter', 'reset'])
+const emit = defineEmits(['update:sortBy', 'update:formatFilter', 'update:categoryFilter', 'update:subcategoryFilter', 'reset'])
 
 const { isMobile } = useDevice()
 const { viewMode, setViewMode } = useViewMode()
 
-// 移动端筛选弹窗状态
-const showFilterPopup = ref(false)
+// 移动端弹窗状态
+const showFilterPopup = ref(false) // 格式+排序筛选弹窗
+const showCategoryDrawer = ref(false) // 分类选择抽屉
 
 // 临时筛选值（用于弹窗内）
 const tempSortBy = ref(props.sortBy)
 const tempFormatFilter = ref(props.formatFilter)
-const tempCategoryFilter = ref(props.categoryFilter)
-const tempViewMode = ref(viewMode.value)
 
 // 是否有激活的筛选条件
 const hasActiveFilters = computed(() => {
-  return props.formatFilter !== 'all' || props.categoryFilter !== 'all' || props.sortBy !== 'newest'
+  return props.formatFilter !== 'all' || props.categoryFilter !== 'all' || props.subcategoryFilter !== 'all' || props.sortBy !== 'newest'
+})
+
+// PC 端级联选择器的值（数组格式：[category] 或 [category, subcategory]）
+const cascaderValue = computed(() => {
+  if (props.categoryFilter === 'all') {
+    return []
+  }
+  if (props.subcategoryFilter === 'all') {
+    return [props.categoryFilter]
+  }
+  return [props.categoryFilter, props.subcategoryFilter]
+})
+
+// PC 端级联选择器的选项（树形结构）
+const cascaderOptions = computed(() => {
+  return props.categoryOptions
+    .filter(opt => opt.value !== 'all') // 排除"全部"选项，cascader 用 clearable 实现
+    .map((opt) => {
+      const option = {
+        value: opt.value,
+        label: opt.label,
+      }
+      // 如果有二级分类，添加 children
+      if (opt.subcategories && opt.subcategories.length > 0) {
+        option.children = opt.subcategories.map(sub => ({
+          value: sub.name,
+          label: sub.name,
+        }))
+      }
+      return option
+    })
 })
 
 // 视图模式滑动指示器位置
@@ -72,50 +112,102 @@ const mobileViewModeSliderPosition = computed(() => {
   return viewMode.value === 'list' ? 'is-list' : 'is-masonry'
 })
 
-// 激活的筛选数量
+// 激活的筛选数量（不含分类，分类单独显示）
 const activeFilterCount = computed(() => {
   let count = 0
   if (props.formatFilter !== 'all')
-    count++
-  if (props.categoryFilter !== 'all')
     count++
   if (props.sortBy !== 'newest')
     count++
   return count
 })
 
+// 当前分类显示文本
+const currentCategoryLabel = computed(() => {
+  if (props.categoryFilter === 'all') {
+    return '分类'
+  }
+  let label = props.categoryFilter
+  if (props.subcategoryFilter !== 'all') {
+    label += ` · ${props.subcategoryFilter}`
+  }
+  return label
+})
+
+// 分类是否激活
+const isCategoryActive = computed(() => {
+  return props.categoryFilter !== 'all'
+})
+
 function handleSortChange(value) {
   emit('update:sortBy', value)
-  // 追踪排序筛选
   trackFilter('sort', value)
 }
 
 function handleFormatChange(value) {
   emit('update:formatFilter', value)
-  // 追踪格式筛选
   trackFilter('format', value)
 }
 
 function handleCategoryChange(value) {
   emit('update:categoryFilter', value)
-  // 追踪分类筛选
+  emit('update:subcategoryFilter', 'all')
   trackFilter('category', value)
+}
+
+function handleSubcategoryChange(value) {
+  emit('update:subcategoryFilter', value)
+  trackFilter('subcategory', value)
+}
+
+// PC 端级联选择器变化处理
+function handleCascaderChange(value) {
+  if (!value || value.length === 0) {
+    // 清空选择 -> 重置为全部
+    emit('update:categoryFilter', 'all')
+    emit('update:subcategoryFilter', 'all')
+    trackFilter('category', 'all')
+  }
+  else if (value.length === 1) {
+    // 只选了一级分类
+    emit('update:categoryFilter', value[0])
+    emit('update:subcategoryFilter', 'all')
+    trackFilter('category', value[0])
+  }
+  else {
+    // 选了一级和二级分类
+    emit('update:categoryFilter', value[0])
+    emit('update:subcategoryFilter', value[1])
+    trackFilter('category', value[0])
+    trackFilter('subcategory', value[1])
+  }
 }
 
 function handleReset() {
   emit('update:sortBy', 'newest')
   emit('update:formatFilter', 'all')
   emit('update:categoryFilter', 'all')
+  emit('update:subcategoryFilter', 'all')
   emit('reset')
 }
 
-// 移动端弹窗操作
+// 移动端：打开分类抽屉
+function openCategoryDrawer() {
+  showCategoryDrawer.value = true
+}
+
+// 移动端：分类选择确认
+function handleCategoryConfirm() {
+  trackFilter('category', props.categoryFilter)
+  if (props.subcategoryFilter !== 'all') {
+    trackFilter('subcategory', props.subcategoryFilter)
+  }
+}
+
+// 移动端：打开筛选弹窗（格式+排序）
 function openFilterPopup() {
-  // 同步当前值到临时值
   tempSortBy.value = props.sortBy
   tempFormatFilter.value = props.formatFilter
-  tempCategoryFilter.value = props.categoryFilter
-  tempViewMode.value = viewMode.value
   showFilterPopup.value = true
 }
 
@@ -126,18 +218,12 @@ function closeFilterPopup() {
 function applyFilters() {
   emit('update:sortBy', tempSortBy.value)
   emit('update:formatFilter', tempFormatFilter.value)
-  emit('update:categoryFilter', tempCategoryFilter.value)
-  setViewMode(tempViewMode.value)
 
-  // 追踪移动端筛选应用
   if (tempSortBy.value !== props.sortBy) {
     trackFilter('sort', tempSortBy.value)
   }
   if (tempFormatFilter.value !== props.formatFilter) {
     trackFilter('format', tempFormatFilter.value)
-  }
-  if (tempCategoryFilter.value !== props.categoryFilter) {
-    trackFilter('category', tempCategoryFilter.value)
   }
 
   closeFilterPopup()
@@ -146,9 +232,6 @@ function applyFilters() {
 function resetFilters() {
   tempSortBy.value = 'newest'
   tempFormatFilter.value = 'all'
-  tempCategoryFilter.value = 'all'
-  // 移动端默认视图为瀑布流
-  tempViewMode.value = isMobile.value ? 'masonry' : 'grid'
 }
 </script>
 
@@ -229,23 +312,20 @@ function resetFilters() {
 
       <div class="filter-divider" />
 
-      <!-- Category Filter -->
+      <!-- Category Filter (级联选择器) -->
       <div class="filter-item">
         <span class="filter-label">分类</span>
-        <el-select
-          :model-value="categoryFilter"
+        <el-cascader
+          :model-value="cascaderValue"
+          :options="cascaderOptions"
+          :props="{ expandTrigger: 'hover', checkStrictly: true }"
           placeholder="全部分类"
+          clearable
           size="default"
-          style="width: 120px"
-          @change="handleCategoryChange"
-        >
-          <el-option
-            v-for="option in categoryOptions"
-            :key="option.value"
-            :label="option.label"
-            :value="option.value"
-          />
-        </el-select>
+          popper-class="category-cascader-popper"
+          style="width: 180px"
+          @change="handleCascaderChange"
+        />
       </div>
 
       <!-- Format Filter -->
@@ -287,9 +367,9 @@ function resetFilters() {
       </div>
     </div>
 
-    <!-- 移动端视图切换 + 筛选按钮 -->
+    <!-- 移动端视图切换 + 分类按钮 + 筛选按钮 -->
     <div v-else class="filter-right-mobile">
-      <!-- 视图模式切换 - 即时生效（移动端只有瀑布流和列表两种模式） -->
+      <!-- 视图模式切换 -->
       <div class="view-mode-toggle-mobile">
         <div class="view-mode-slider-mobile" :class="mobileViewModeSliderPosition" />
         <button
@@ -317,7 +397,22 @@ function resetFilters() {
         </button>
       </div>
 
-      <!-- 筛选按钮 (紧凑) -->
+      <!-- 分类按钮（独立出来，点击打开左右分栏抽屉） -->
+      <button
+        class="category-btn"
+        :class="{ 'is-active': isCategoryActive }"
+        @click="openCategoryDrawer"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 6h16M4 12h16M4 18h7" />
+        </svg>
+        <span class="category-btn-text">{{ currentCategoryLabel }}</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+
+      <!-- 筛选按钮（格式+排序） -->
       <button class="filter-btn filter-btn-compact" @click="openFilterPopup">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
@@ -326,13 +421,24 @@ function resetFilters() {
       </button>
     </div>
 
-    <!-- 移动端筛选弹窗 - 使用 Teleport 确保层级 -->
+    <!-- 移动端分类选择抽屉（左右分栏） -->
+    <MobileCategoryDrawer
+      v-model:show="showCategoryDrawer"
+      :category-options="categoryOptions"
+      :category-filter="categoryFilter"
+      :subcategory-filter="subcategoryFilter"
+      @update:category-filter="handleCategoryChange"
+      @update:subcategory-filter="handleSubcategoryChange"
+      @confirm="handleCategoryConfirm"
+    />
+
+    <!-- 移动端筛选弹窗（格式+排序） -->
     <Teleport to="body">
       <van-popup
         v-model:show="showFilterPopup"
         position="bottom"
         round
-        :style="{ maxHeight: '80%' }"
+        :style="{ maxHeight: '60%' }"
         class="filter-popup"
         :teleport="null"
         :close-on-click-overlay="true"
@@ -353,24 +459,6 @@ function resetFilters() {
 
           <!-- 筛选选项 -->
           <div class="popup-body">
-            <!-- 分类 -->
-            <div class="filter-group">
-              <h3 class="group-title">
-                分类
-              </h3>
-              <div class="option-grid">
-                <button
-                  v-for="option in categoryOptions"
-                  :key="option.value"
-                  class="option-btn"
-                  :class="{ 'is-active': tempCategoryFilter === option.value }"
-                  @click="tempCategoryFilter = option.value"
-                >
-                  {{ option.label }}
-                </button>
-              </div>
-            </div>
-
             <!-- 格式 -->
             <div class="filter-group">
               <h3 class="group-title">
@@ -600,6 +688,56 @@ function resetFilters() {
   display: flex;
   align-items: center;
   gap: $spacing-sm;
+}
+
+// 移动端分类按钮
+.category-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  max-width: 100px; // 限制最大宽度
+  transition: all 0.2s ease;
+
+  svg:first-child {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  .category-btn-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .arrow-icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    opacity: 0.5;
+  }
+
+  &.is-active {
+    color: var(--color-accent);
+    border-color: var(--color-accent-light);
+    background: var(--color-accent-light);
+
+    svg {
+      color: var(--color-accent);
+    }
+  }
+
+  &:active {
+    transform: scale(0.95);
+  }
 }
 
 // 移动端视图模式切换
@@ -888,10 +1026,24 @@ function resetFilters() {
     // 移除 sticky 相关的 hack
     -webkit-transform: none;
     transform: none;
+    // 移动端强制不换行
+    flex-wrap: nowrap;
   }
 
   .filter-left {
-    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0; // 允许收缩
+    overflow: hidden;
+
+    .result-count {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .filter-right-mobile {
+    flex-shrink: 0; // 不收缩
   }
 }
 </style>

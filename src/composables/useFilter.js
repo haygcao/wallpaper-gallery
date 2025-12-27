@@ -17,8 +17,11 @@ export function useFilter(wallpapers, externalSearchQuery = null) {
   // 格式筛选
   const formatFilter = ref('all')
 
-  // 分类筛选
+  // 分类筛选（一级分类）
   const categoryFilter = ref(localStorage.getItem(STORAGE_KEYS.CATEGORY) || 'all')
+
+  // 二级分类筛选
+  const subcategoryFilter = ref('all')
 
   // 防抖处理搜索
   const updateDebouncedQuery = debounce((value) => {
@@ -37,31 +40,79 @@ export function useFilter(wallpapers, externalSearchQuery = null) {
   // 保存分类筛选偏好
   watch(categoryFilter, (value) => {
     localStorage.setItem(STORAGE_KEYS.CATEGORY, value)
+    // 切换一级分类时重置二级分类
+    subcategoryFilter.value = 'all'
   })
 
-  // 动态生成分类选项（从壁纸数据中提取）
+  // 动态生成分类选项（从壁纸数据中提取，包含二级分类信息）
   const categoryOptions = computed(() => {
-    const categories = new Set()
-    wallpapers.value.forEach((w) => {
-      if (w.category) {
-        categories.add(w.category)
-      }
-    })
-    // 排序分类（按数量降序）
+    // 统计一级分类
     const categoryCount = {}
+    // 统计二级分类 { '游戏': { '原神': 5, '崩坏': 3 }, ... }
+    const subcategoryCount = {}
+
     wallpapers.value.forEach((w) => {
       if (w.category) {
         categoryCount[w.category] = (categoryCount[w.category] || 0) + 1
+
+        // 统计二级分类（仅当存在时）
+        if (w.subcategory) {
+          if (!subcategoryCount[w.category]) {
+            subcategoryCount[w.category] = {}
+          }
+          subcategoryCount[w.category][w.subcategory] = (subcategoryCount[w.category][w.subcategory] || 0) + 1
+        }
       }
     })
-    const sortedCategories = [...categories].sort((a, b) => {
+
+    // 排序分类（按数量降序）
+    const sortedCategories = Object.keys(categoryCount).sort((a, b) => {
       return (categoryCount[b] || 0) - (categoryCount[a] || 0)
     })
-    // 返回选项格式
+
+    // 返回选项格式（包含二级分类信息）
     return [
-      { value: 'all', label: '全部分类' },
-      ...sortedCategories.map(cat => ({ value: cat, label: cat })),
+      { value: 'all', label: '全部分类', count: wallpapers.value.length },
+      ...sortedCategories.map((cat) => {
+        const subcats = subcategoryCount[cat]
+        let subcategories = []
+
+        if (subcats) {
+          // 将二级分类转换为数组并排序
+          subcategories = Object.entries(subcats)
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count)
+        }
+
+        return {
+          value: cat,
+          label: cat,
+          count: categoryCount[cat],
+          // 仅当有二级分类时才添加
+          ...(subcategories.length > 0 && { subcategories }),
+        }
+      }),
     ]
+  })
+
+  // 当前一级分类的二级分类选项
+  const subcategoryOptions = computed(() => {
+    if (categoryFilter.value === 'all') {
+      return [{ value: 'all', label: '全部' }]
+    }
+
+    const currentCategory = categoryOptions.value.find(opt => opt.value === categoryFilter.value)
+    if (currentCategory && currentCategory.subcategories && currentCategory.subcategories.length > 0) {
+      return [
+        { value: 'all', label: '全部' },
+        ...currentCategory.subcategories.map(sub => ({
+          value: sub.name,
+          label: `${sub.name} (${sub.count})`,
+        })),
+      ]
+    }
+
+    return [{ value: 'all', label: '全部' }]
   })
 
   // 当分类选项变化时，检查当前选中的分类是否仍然有效
@@ -76,11 +127,13 @@ export function useFilter(wallpapers, externalSearchQuery = null) {
   const filteredWallpapers = computed(() => {
     let result = [...wallpapers.value]
 
-    // 搜索过滤
+    // 搜索过滤（匹配文件名、分类、二级分类、标签）
     if (debouncedQuery.value) {
       const query = debouncedQuery.value.toLowerCase()
       result = result.filter(w =>
         w.filename.toLowerCase().includes(query)
+        || w.category?.toLowerCase().includes(query)
+        || w.subcategory?.toLowerCase().includes(query)
         || (w.tags && w.tags.some(tag => tag.toLowerCase().includes(query))),
       )
     }
@@ -92,10 +145,17 @@ export function useFilter(wallpapers, externalSearchQuery = null) {
       )
     }
 
-    // 分类过滤
+    // 一级分类过滤
     if (categoryFilter.value !== 'all') {
       result = result.filter(w =>
         w.category === categoryFilter.value,
+      )
+    }
+
+    // 二级分类过滤
+    if (subcategoryFilter.value !== 'all') {
+      result = result.filter(w =>
+        w.subcategory === subcategoryFilter.value,
       )
     }
 
@@ -129,7 +189,7 @@ export function useFilter(wallpapers, externalSearchQuery = null) {
 
   // 是否有激活的筛选条件
   const hasActiveFilters = computed(() => {
-    return debouncedQuery.value || formatFilter.value !== 'all' || categoryFilter.value !== 'all'
+    return debouncedQuery.value || formatFilter.value !== 'all' || categoryFilter.value !== 'all' || subcategoryFilter.value !== 'all'
   })
 
   // 重置所有筛选条件
@@ -138,6 +198,7 @@ export function useFilter(wallpapers, externalSearchQuery = null) {
     debouncedQuery.value = ''
     formatFilter.value = 'all'
     categoryFilter.value = 'all'
+    subcategoryFilter.value = 'all'
     sortBy.value = 'newest'
   }
 
@@ -146,7 +207,9 @@ export function useFilter(wallpapers, externalSearchQuery = null) {
     sortBy,
     formatFilter,
     categoryFilter,
+    subcategoryFilter,
     categoryOptions,
+    subcategoryOptions,
     filteredWallpapers,
     resultCount,
     hasActiveFilters,

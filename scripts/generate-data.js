@@ -1,6 +1,7 @@
 /**
  * 壁纸数据生成脚本
  * 在构建前运行，为三个系列（desktop, mobile, avatar）分别生成 JSON 文件
+ * 支持分类文件夹结构：wallpaper/desktop/动漫/xxx.jpg
  */
 
 import { Buffer } from 'node:buffer'
@@ -54,18 +55,18 @@ const CONFIG = {
       name: '电脑壁纸',
       wallpaperDir: 'wallpaper/desktop',
       thumbnailDir: 'thumbnail/desktop',
-      previewDir: 'preview/desktop', // 预览图目录（仅 desktop 系列有）
+      previewDir: 'preview/desktop',
       outputFile: 'desktop.json',
-      hasPreview: true, // 是否有预览图
+      hasPreview: true,
     },
     mobile: {
       id: 'mobile',
       name: '手机壁纸',
       wallpaperDir: 'wallpaper/mobile',
       thumbnailDir: 'thumbnail/mobile',
-      previewDir: 'preview/mobile', // 预览图目录（mobile 长屏使用预览图）
+      previewDir: 'preview/mobile',
       outputFile: 'mobile.json',
-      hasPreview: true, // 手机壁纸使用预览图（1080px，更清晰）
+      hasPreview: true,
     },
     avatar: {
       id: 'avatar',
@@ -79,11 +80,100 @@ const CONFIG = {
 }
 
 /**
- * 通过本地目录获取壁纸列表（优先使用，避免 API 限流）
- * @returns {{ files: Array, repoPath: string } | null} 壁纸文件列表和仓库路径，失败时返回 null
+ * 递归扫描目录获取所有图片文件
+ * 支持二级分类文件夹结构：wallpaper/desktop/游戏/原神/xxx.jpg
+ * @param {string} dir - 目录路径
+ * @param {string} baseDir - 基础目录（用于计算相对路径）
+ * @returns {Array<{name: string, size: number, category: string, subcategory: string|null, relativePath: string}>}
+ */
+function scanDirectoryRecursive(dir, baseDir = dir) {
+  const files = []
+
+  if (!fs.existsSync(dir)) {
+    return files
+  }
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+
+    if (entry.isDirectory()) {
+      // 递归扫描子目录
+      files.push(...scanDirectoryRecursive(fullPath, baseDir))
+    }
+    else if (entry.isFile()) {
+      const ext = path.extname(entry.name).toLowerCase()
+      if (CONFIG.IMAGE_EXTENSIONS.includes(ext)) {
+        const stats = fs.statSync(fullPath)
+        const relativePath = path.relative(baseDir, fullPath)
+        // 从相对路径提取分类（支持二级分类结构）
+        // 路径格式: L1/L2/filename.jpg 或 L1/filename.jpg 或 filename.jpg
+        const pathParts = relativePath.split(path.sep)
+
+        let category = '未分类'
+        let subcategory = null
+
+        if (pathParts.length >= 3) {
+          // 二级分类结构: L1/L2/filename.jpg
+          category = pathParts[0]
+          const l2 = pathParts[1]
+          // "通用" 表示没有二级分类，设为 null
+          subcategory = l2 === '通用' ? null : l2
+        }
+        else if (pathParts.length === 2) {
+          // 一级分类结构: L1/filename.jpg（兼容旧结构）
+          category = pathParts[0]
+          subcategory = null
+        }
+        else {
+          // 根目录文件，从文件名提取分类
+          category = extractCategoryFromFilename(entry.name)
+          subcategory = null
+        }
+
+        files.push({
+          name: entry.name,
+          size: stats.size,
+          sha: '',
+          type: 'file',
+          category,
+          subcategory,
+          relativePath, // 相对于 wallpaperDir 的路径
+          fullPath,
+        })
+      }
+    }
+  }
+
+  return files
+}
+
+/**
+ * 从文件名中提取分类（兼容旧的文件名格式）
+ * 文件名格式: {分类}--{原文件名}.{ext}
+ * 例如: 游戏--原神_雷电将军.png -> 游戏
+ */
+function extractCategoryFromFilename(filename) {
+  const filenameNoExt = path.basename(filename, path.extname(filename))
+
+  // 检查是否包含分类前缀（使用 -- 分隔）
+  if (filenameNoExt.includes('--')) {
+    const parts = filenameNoExt.split('--')
+    if (parts.length >= 2 && parts[0].trim()) {
+      return parts[0].trim()
+    }
+  }
+
+  // 没有分类前缀，返回 '未分类'
+  return '未分类'
+}
+
+/**
+ * 通过本地目录获取壁纸列表（支持分类文件夹结构）
+ * @returns {{ files: Array, repoPath: string } | null}
  */
 function fetchWallpapersFromLocal(seriesConfig) {
-  // 尝试多个可能的路径
   for (const repoPath of CONFIG.LOCAL_REPO_PATHS) {
     const localWallpaperDir = path.join(repoPath, seriesConfig.wallpaperDir)
 
@@ -94,21 +184,8 @@ function fetchWallpapersFromLocal(seriesConfig) {
 
     console.log(`  Fetching from local: ${localWallpaperDir}`)
 
-    const files = fs.readdirSync(localWallpaperDir)
-      .filter((filename) => {
-        const ext = path.extname(filename).toLowerCase()
-        return CONFIG.IMAGE_EXTENSIONS.includes(ext)
-      })
-      .map((filename) => {
-        const filePath = path.join(localWallpaperDir, filename)
-        const stats = fs.statSync(filePath)
-        return {
-          name: filename,
-          size: stats.size,
-          sha: '', // 本地模式无 SHA
-          type: 'file',
-        }
-      })
+    // 递归扫描目录
+    const files = scanDirectoryRecursive(localWallpaperDir)
 
     console.log(`  Found ${files.length} image files`)
     return { files, repoPath }
@@ -134,7 +211,6 @@ async function fetchWallpapersFromGitHub(seriesConfig) {
   })
 
   if (!response.ok) {
-    // 如果是 404，说明目录还不存在
     if (response.status === 404) {
       console.log(`  Directory not found on GitHub (this is OK for new series)`)
       return []
@@ -142,57 +218,79 @@ async function fetchWallpapersFromGitHub(seriesConfig) {
     throw new Error(`GitHub API error: ${response.status} ${response.statusText}`)
   }
 
-  const files = await response.json()
+  const entries = await response.json()
+  const files = []
 
-  // 过滤出图片文件
-  const imageFiles = files.filter((file) => {
-    if (file.type !== 'file')
-      return false
-    const ext = path.extname(file.name).toLowerCase()
-    return CONFIG.IMAGE_EXTENSIONS.includes(ext)
-  })
-
-  console.log(`  Found ${imageFiles.length} image files`)
-
-  return imageFiles
-}
-
-/**
- * 从文件名中提取分类
- * 文件名格式: {分类}--{原文件名}.{ext}
- * 例如: 游戏--原神_雷电将军.png -> 游戏
- */
-function extractCategory(filename) {
-  const filenameNoExt = path.basename(filename, path.extname(filename))
-
-  // 检查是否包含分类前缀（使用 -- 分隔）
-  if (filenameNoExt.includes('--')) {
-    const parts = filenameNoExt.split('--')
-    if (parts.length >= 2 && parts[0].trim()) {
-      return parts[0].trim()
+  // 处理目录和文件
+  for (const entry of entries) {
+    if (entry.type === 'dir') {
+      // 递归获取子目录内容
+      const subFiles = await fetchSubdirectoryFromGitHub(seriesConfig, entry.name)
+      files.push(...subFiles)
+    }
+    else if (entry.type === 'file') {
+      const ext = path.extname(entry.name).toLowerCase()
+      if (CONFIG.IMAGE_EXTENSIONS.includes(ext)) {
+        files.push({
+          ...entry,
+          category: extractCategoryFromFilename(entry.name),
+          relativePath: entry.name,
+        })
+      }
     }
   }
 
-  // 没有分类前缀，返回 '未分类'
-  return '未分类'
+  console.log(`  Found ${files.length} image files`)
+  return files
+}
+
+/**
+ * 从 GitHub API 获取子目录内容
+ */
+async function fetchSubdirectoryFromGitHub(seriesConfig, subdir) {
+  const apiUrl = `https://api.github.com/repos/${CONFIG.GITHUB_OWNER}/${CONFIG.GITHUB_REPO}/contents/${seriesConfig.wallpaperDir}/${subdir}?ref=${CONFIG.GITHUB_BRANCH}`
+
+  const response = await fetch(apiUrl, {
+    headers: {
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'Wallpaper-Gallery-Builder',
+    },
+  })
+
+  if (!response.ok) {
+    console.log(`  Failed to fetch subdirectory: ${subdir}`)
+    return []
+  }
+
+  const entries = await response.json()
+  const files = []
+
+  for (const entry of entries) {
+    if (entry.type === 'file') {
+      const ext = path.extname(entry.name).toLowerCase()
+      if (CONFIG.IMAGE_EXTENSIONS.includes(ext)) {
+        files.push({
+          ...entry,
+          category: subdir, // 子目录名即为分类
+          relativePath: `${subdir}/${entry.name}`,
+        })
+      }
+    }
+  }
+
+  return files
 }
 
 /**
  * 获取图片分辨率信息
- * 使用 ImageMagick 的 identify 命令获取图片尺寸
- * @param {string} filePath - 图片文件路径
- * @returns {{ width: number, height: number } | null} 图片宽高信息，失败时返回 null
  */
 function getImageDimensions(filePath) {
   try {
-    // 尝试使用 ImageMagick 获取图片尺寸
-    // magick identify -format "%w %h" image.jpg
     let cmd = 'magick identify'
     try {
       execSync('magick --version', { stdio: 'ignore' })
     }
     catch {
-      // 如果 magick 不可用，尝试旧版 identify 命令
       cmd = 'identify'
     }
 
@@ -214,9 +312,6 @@ function getImageDimensions(filePath) {
 
 /**
  * 根据分辨率生成标签信息
- * @param {number} width
- * @param {number} height
- * @returns {{ label: string, type: string }} 分辨率标签和类型
  */
 function getResolutionLabel(width, height) {
   const maxDim = Math.max(width, height)
@@ -242,39 +337,53 @@ function getResolutionLabel(width, height) {
 }
 
 /**
- * 生成壁纸数据
- * @param {Array} files - 文件列表
- * @param {object} seriesConfig - 系列配置
- * @param {string|null} localRepoPath - 本地仓库路径（用于获取分辨率）
+ * 生成壁纸数据（支持二级分类文件夹结构）
  */
 function generateWallpaperData(files, seriesConfig, localRepoPath = null) {
   const now = new Date()
 
   return files.map((file, index) => {
     const ext = path.extname(file.name).replace('.', '').toUpperCase()
-
-    // 根据索引生成模拟上传时间（越前面的越新）
-    const uploadDate = new Date(now.getTime() - index * 3600000) // 每张间隔1小时
+    const uploadDate = new Date(now.getTime() - index * 3600000)
 
     // 文件名（不含扩展名）
     const filenameNoExt = path.basename(file.name, path.extname(file.name))
 
-    // 提取分类
-    const category = extractCategory(file.name)
+    // 分类（优先使用文件对象中的 category，否则从文件名提取）
+    const category = file.category || extractCategoryFromFilename(file.name)
+    // 二级分类（null 表示没有二级分类）
+    const subcategory = file.subcategory || null
 
-    // 只存储相对路径（前端会用 buildImageUrl 动态拼接完整 URL）
-    const imagePath = `/${seriesConfig.wallpaperDir}/${encodeURIComponent(file.name)}`
-    const thumbnailPath = `/${seriesConfig.thumbnailDir}/${encodeURIComponent(filenameNoExt)}.webp`
-    const previewPath = seriesConfig.hasPreview
-      ? `/${seriesConfig.previewDir}/${encodeURIComponent(filenameNoExt)}.webp`
-      : null
+    // 构建路径（支持二级分类文件夹结构）
+    // relativePath 可能是 "游戏/原神/xxx.jpg" 或 "动漫/通用/xxx.jpg" 或 "xxx.jpg"
+    const relativePath = file.relativePath || file.name
+    const pathParts = relativePath.split(path.sep)
+    const isInSubfolder = pathParts.length > 1
+
+    // 壁纸路径
+    const imagePath = `/${seriesConfig.wallpaperDir}/${encodeURIComponent(relativePath).replace(/%2F/g, '/')}`
+
+    // 缩略图和预览图路径（与壁纸保持相同的目录结构）
+    let thumbnailPath, previewPath
+    if (isInSubfolder) {
+      const subdir = pathParts.slice(0, -1).join('/')
+      thumbnailPath = `/${seriesConfig.thumbnailDir}/${subdir}/${encodeURIComponent(filenameNoExt)}.webp`
+      previewPath = seriesConfig.hasPreview
+        ? `/${seriesConfig.previewDir}/${subdir}/${encodeURIComponent(filenameNoExt)}.webp`
+        : null
+    }
+    else {
+      thumbnailPath = `/${seriesConfig.thumbnailDir}/${encodeURIComponent(filenameNoExt)}.webp`
+      previewPath = seriesConfig.hasPreview
+        ? `/${seriesConfig.previewDir}/${encodeURIComponent(filenameNoExt)}.webp`
+        : null
+    }
 
     // 获取图片分辨率
     let resolution = null
-    if (localRepoPath) {
-      const localFilePath = path.join(localRepoPath, seriesConfig.wallpaperDir, file.name)
-      if (fs.existsSync(localFilePath)) {
-        const dimensions = getImageDimensions(localFilePath)
+    if (localRepoPath && file.fullPath) {
+      if (fs.existsSync(file.fullPath)) {
+        const dimensions = getImageDimensions(file.fullPath)
         if (dimensions) {
           const labelInfo = getResolutionLabel(dimensions.width, dimensions.height)
           resolution = {
@@ -291,21 +400,30 @@ function generateWallpaperData(files, seriesConfig, localRepoPath = null) {
       id: `${seriesConfig.id}-${index + 1}`,
       filename: file.name,
       category,
-      // 存储相对路径，前端动态拼接（支持版本号刷新缓存）
       path: imagePath,
       thumbnailPath,
       size: file.size,
       format: ext,
       createdAt: uploadDate.toISOString(),
-      sha: file.sha,
+      sha: file.sha || '',
     }
 
-    // 添加预览图路径（仅 desktop 系列）
+    // 添加二级分类（仅当存在时）
+    if (subcategory) {
+      wallpaperData.subcategory = subcategory
+    }
+
+    // 自动生成 tags（包含分类信息，便于搜索）
+    const autoTags = [category]
+    if (subcategory) {
+      autoTags.push(subcategory)
+    }
+    wallpaperData.tags = autoTags
+
     if (previewPath) {
       wallpaperData.previewPath = previewPath
     }
 
-    // 添加分辨率信息
     if (resolution) {
       wallpaperData.resolution = resolution
     }
@@ -315,13 +433,9 @@ function generateWallpaperData(files, seriesConfig, localRepoPath = null) {
 }
 
 /**
- * 按分类拆分并生成独立的 JSON 文件
- * @param {Array} wallpapers - 壁纸数据
- * @param {string} seriesId - 系列 ID
- * @param {object} seriesConfig - 系列配置
+ * 按分类拆分并生成独立的 JSON 文件（支持二级分类）
  */
 function generateCategorySplitData(wallpapers, seriesId, seriesConfig) {
-  // 创建系列子目录
   const seriesDir = path.join(CONFIG.OUTPUT_DIR, seriesId)
   if (!fs.existsSync(seriesDir)) {
     fs.mkdirSync(seriesDir, { recursive: true })
@@ -337,10 +451,28 @@ function generateCategorySplitData(wallpapers, seriesId, seriesConfig) {
     categoryGroups[category].push(wallpaper)
   })
 
-  // 生成分类索引
+  // 生成分类索引（包含二级分类信息）
   const categories = Object.entries(categoryGroups).map(([categoryName, items]) => {
-    // 选择第一张作为分类缩略图
     const thumbnail = items[0]?.thumbnailPath || items[0]?.path || ''
+
+    // 统计该分类下的二级分类
+    const subcategoryMap = {}
+    items.forEach((item) => {
+      const subcat = item.subcategory || null
+      if (!subcategoryMap[subcat]) {
+        subcategoryMap[subcat] = 0
+      }
+      subcategoryMap[subcat]++
+    })
+
+    // 转换为数组格式
+    const subcategories = Object.entries(subcategoryMap)
+      .map(([name, count]) => ({
+        name: name === 'null' ? null : name,
+        count,
+      }))
+      .filter(s => s.name !== null) // 过滤掉 null（无二级分类）
+      .sort((a, b) => b.count - a.count)
 
     return {
       id: categoryName.replace(/\s+/g, '-').toLowerCase(),
@@ -348,25 +480,23 @@ function generateCategorySplitData(wallpapers, seriesId, seriesConfig) {
       count: items.length,
       thumbnail,
       file: `${categoryName}.json`,
+      // 二级分类列表（仅当存在时）
+      ...(subcategories.length > 0 && { subcategories }),
     }
   })
 
-  // 按数量降序排列
   categories.sort((a, b) => b.count - a.count)
 
-  // 加密分类数据（敏感信息）
   const categoriesBlob = encodeData(JSON.stringify(categories))
 
-  // 生成 index.json（加密版本）
   const indexData = {
     generatedAt: new Date().toISOString(),
     series: seriesId,
     seriesName: seriesConfig.name,
     total: wallpapers.length,
     categoryCount: categories.length,
-    // 加密的分类列表
     blob: categoriesBlob,
-    schema: 2, // 版本 2：支持分类拆分
+    schema: 2,
     env: process.env.NODE_ENV || 'production',
   }
 
@@ -376,19 +506,9 @@ function generateCategorySplitData(wallpapers, seriesId, seriesConfig) {
 
   // 为每个分类生成独立的 JSON 文件
   Object.entries(categoryGroups).forEach(([categoryName, items]) => {
-    const categoryData = {
-      generatedAt: new Date().toISOString(),
-      series: seriesId,
-      category: categoryName,
-      total: items.length,
-      wallpapers: items,
-      schema: 2,
-    }
-
-    // 加密数据
     const blob = encodeData(JSON.stringify(items))
     const encryptedData = {
-      generatedAt: categoryData.generatedAt,
+      generatedAt: new Date().toISOString(),
       series: seriesId,
       category: categoryName,
       total: items.length,
@@ -412,7 +532,6 @@ async function processSeries(seriesId, seriesConfig) {
   console.log(`Processing series: ${seriesConfig.name} (${seriesId})`)
   console.log('-'.repeat(40))
 
-  // 优先从本地目录获取（避免 GitHub API 限流）
   let files = null
   let localRepoPath = null
   const localResult = fetchWallpapersFromLocal(seriesConfig)
@@ -422,14 +541,12 @@ async function processSeries(seriesId, seriesConfig) {
     localRepoPath = localResult.repoPath
   }
   else {
-    // 如果本地目录不存在，则从 GitHub API 获取
     console.log('  Falling back to GitHub API...')
     files = await fetchWallpapersFromGitHub(seriesConfig)
   }
 
   if (files.length === 0) {
     console.log(`  No image files found for ${seriesConfig.name}`)
-    // 生成空的 JSON 文件
     const wallpapers = []
     const blob = encodeData(JSON.stringify(wallpapers))
 
@@ -438,9 +555,8 @@ async function processSeries(seriesId, seriesConfig) {
       series: seriesId,
       seriesName: seriesConfig.name,
       total: 0,
-      schema: 1, // 数据结构版本号，方便以后升级
+      schema: 1,
       env: process.env.NODE_ENV || 'production',
-      // 加密后的数据块
       blob,
     }
 
@@ -451,13 +567,9 @@ async function processSeries(seriesId, seriesConfig) {
     return { seriesId, count: 0, wallpapers }
   }
 
-  // 生成壁纸数据（传入 localRepoPath 以获取分辨率）
   const wallpapers = generateWallpaperData(files, seriesConfig, localRepoPath)
-
-  // 按大小降序排列（默认显示最大的在前）
   wallpapers.sort((a, b) => b.size - a.size)
 
-  // 写入 JSON 文件
   const outputPath = path.join(CONFIG.OUTPUT_DIR, seriesConfig.outputFile)
   const blob = encodeData(JSON.stringify(wallpapers))
 
@@ -466,19 +578,23 @@ async function processSeries(seriesId, seriesConfig) {
     series: seriesId,
     seriesName: seriesConfig.name,
     total: wallpapers.length,
-    schema: 1, // 数据结构版本号
+    schema: 1,
     env: process.env.NODE_ENV || 'production',
-    // 不再直接明文输出 wallpapers，而是输出加密后的数据块
     blob,
   }
 
   fs.writeFileSync(outputPath, JSON.stringify(outputData, null, 2))
   console.log(`  Output: ${seriesConfig.outputFile} (${wallpapers.length} items)`)
 
-  // 分类统计
+  // 分类统计（包含二级分类）
   const categoryStats = {}
+  const subcategoryStats = {}
   wallpapers.forEach((w) => {
     categoryStats[w.category] = (categoryStats[w.category] || 0) + 1
+    if (w.subcategory) {
+      const key = `${w.category}/${w.subcategory}`
+      subcategoryStats[key] = (subcategoryStats[key] || 0) + 1
+    }
   })
 
   console.log('  Categories:')
@@ -487,6 +603,20 @@ async function processSeries(seriesId, seriesConfig) {
     .forEach(([cat, count]) => {
       console.log(`    ${cat}: ${count}`)
     })
+
+  // 显示二级分类统计
+  if (Object.keys(subcategoryStats).length > 0) {
+    console.log('  Subcategories:')
+    Object.entries(subcategoryStats)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10) // 只显示前10个
+      .forEach(([subcat, count]) => {
+        console.log(`    ${subcat}: ${count}`)
+      })
+    if (Object.keys(subcategoryStats).length > 10) {
+      console.log(`    ... and ${Object.keys(subcategoryStats).length - 10} more`)
+    }
+  }
 
   // 分辨率统计
   const resolutionStats = {}
@@ -505,7 +635,6 @@ async function processSeries(seriesId, seriesConfig) {
       })
   }
 
-  // 如果启用了分类拆分，生成分类索引和分类文件
   if (CONFIG.ENABLE_CATEGORY_SPLIT) {
     console.log('')
     console.log('  Generating category split data...')
@@ -520,23 +649,20 @@ async function processSeries(seriesId, seriesConfig) {
  */
 async function main() {
   console.log('='.repeat(50))
-  console.log('Wallpaper Data Generator (Multi-Series)')
+  console.log('Wallpaper Data Generator (Category Folders Support)')
   console.log('='.repeat(50))
 
   try {
-    // 确保输出目录存在
     if (!fs.existsSync(CONFIG.OUTPUT_DIR)) {
       fs.mkdirSync(CONFIG.OUTPUT_DIR, { recursive: true })
     }
 
-    // 处理所有系列
     const results = []
     for (const [seriesId, seriesConfig] of Object.entries(CONFIG.SERIES)) {
       const result = await processSeries(seriesId, seriesConfig)
       results.push(result)
     }
 
-    // 输出汇总统计
     console.log('')
     console.log('='.repeat(50))
     console.log('Generation Complete!')
@@ -554,7 +680,6 @@ async function main() {
     console.log(`Output directory: ${CONFIG.OUTPUT_DIR}`)
     console.log('')
 
-    // 格式统计（汇总）
     const formatStats = { jpg: 0, png: 0 }
     results.forEach((result) => {
       result.wallpapers.forEach((w) => {

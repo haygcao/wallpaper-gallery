@@ -26,3 +26,7 @@ components.d.ts
 *.njsproj
 *.sln
 *.sw?
+.kiro
+.claude
+.spec-workflow
+

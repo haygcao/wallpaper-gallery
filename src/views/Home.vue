@@ -47,7 +47,7 @@ watch(currentSeries, async (newSeries) => {
 }, { immediate: false })
 
 // Filter
-const { sortBy, formatFilter, categoryFilter, categoryOptions, filteredWallpapers, resultCount, hasActiveFilters, resetFilters } = useFilter(wallpapers, searchQuery)
+const { sortBy, formatFilter, categoryFilter, subcategoryFilter, categoryOptions, subcategoryOptions, filteredWallpapers, resultCount, hasActiveFilters, resetFilters } = useFilter(wallpapers, searchQuery)
 
 // Modal
 const { isOpen, currentData, open, close, updateData } = useModal()
@@ -117,7 +117,9 @@ onMounted(() => {
         v-model:sort-by="sortBy"
         v-model:format-filter="formatFilter"
         v-model:category-filter="categoryFilter"
+        v-model:subcategory-filter="subcategoryFilter"
         :category-options="categoryOptions"
+        :subcategory-options="subcategoryOptions"
         :result-count="resultCount"
         :total-count="total"
         :loading="loading"
