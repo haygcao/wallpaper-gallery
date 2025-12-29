@@ -6,7 +6,7 @@
 # ========================================
 
 [build]
-  # 构建命令（包含克隆图床仓库和自动获取最新 CDN 版本）
+  # 构建命令（包含克隆图床仓库、生成数据和自动获取最新 CDN 版本）
   command = """
     # 克隆图床仓库（用于生成数据）
     git clone --depth 1 https://github.com/IT-NuanxinPro/nuanXinProPic.git nuanXinProPic
@@ -16,8 +16,12 @@
     echo "Using CDN version: $LATEST_TAG"
     # 替换版本号
     sed -i "s/export const CDN_VERSION = '[^']*'/export const CDN_VERSION = '$LATEST_TAG'/" src/utils/constants.js
-    # 安装依赖并构建（使用 staging 模式加载 .env.staging）
-    pnpm install && pnpm build --mode staging
+    # 安装依赖
+    pnpm install
+    # 生成壁纸数据（从图床仓库读取最新数据）
+    node scripts/generate-data.js
+    # 构建（使用 staging 模式加载 .env.staging）
+    pnpm build --mode staging
   """
   # 发布目录
   publish = "dist"
@@ -67,7 +71,9 @@
     LATEST_TAG=$(curl -s "https://api.github.com/repos/IT-NuanxinPro/nuanXinProPic/tags" | grep -o '"name": "[^"]*"' | head -1 | cut -d'"' -f4)
     if [ -z "$LATEST_TAG" ]; then LATEST_TAG="v1.0.5"; fi
     sed -i "s/export const CDN_VERSION = '[^']*'/export const CDN_VERSION = '$LATEST_TAG'/" src/utils/constants.js
-    pnpm install && pnpm build --mode staging
+    pnpm install
+    node scripts/generate-data.js
+    pnpm build --mode staging
   """
 
 [context.deploy-preview.environment]
@@ -80,7 +86,9 @@
     LATEST_TAG=$(curl -s "https://api.github.com/repos/IT-NuanxinPro/nuanXinProPic/tags" | grep -o '"name": "[^"]*"' | head -1 | cut -d'"' -f4)
     if [ -z "$LATEST_TAG" ]; then LATEST_TAG="v1.0.5"; fi
     sed -i "s/export const CDN_VERSION = '[^']*'/export const CDN_VERSION = '$LATEST_TAG'/" src/utils/constants.js
-    pnpm install && pnpm build --mode staging
+    pnpm install
+    node scripts/generate-data.js
+    pnpm build --mode staging
   """
 
 [context.branch-deploy.environment]
