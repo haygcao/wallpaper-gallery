@@ -354,9 +354,13 @@ function closeDrawer() {
 
 .drawer-footer {
   padding: 12px 16px;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
+  background: var(--color-bg-primary);
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
 }
 
 .confirm-btn {
@@ -368,6 +372,7 @@ function closeDrawer() {
   background: var(--color-accent);
   border-radius: 10px;
   transition: all 0.2s ease;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
 
   &:active {
     transform: scale(0.98);
