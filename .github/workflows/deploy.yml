@@ -70,22 +70,33 @@ jobs:
         run: |
           cd nuanXinProPic
 
-          # 检查是否存在时间戳备份文件
-          if [ -f "timestamps-backup.txt" ]; then
-            echo "✅ Found timestamps-backup.txt, restoring file timestamps..."
+          # 优先使用完整备份文件（包含所有三个系列）
+          if [ -f "timestamps-backup-all.txt" ]; then
+            echo "✅ Found timestamps-backup-all.txt, restoring all file timestamps..."
 
-            # 使用备份文件恢复时间戳
+            # 使用完整备份文件恢复时间戳
+            chmod +x scripts/restore-timestamps.sh
+            BACKUP_FILE=timestamps-backup-all.txt ./scripts/restore-timestamps.sh
+
+            echo "✅ All file timestamps restored from backup"
+          elif [ -f "timestamps-backup.txt" ]; then
+            echo "✅ Found timestamps-backup.txt, restoring desktop file timestamps..."
+
+            # 使用旧的备份文件（仅 desktop）
             chmod +x scripts/restore-timestamps.sh
             ./scripts/restore-timestamps.sh
 
-            echo "✅ File timestamps restored from backup"
+            echo "✅ Desktop file timestamps restored from backup"
           else
-            echo "⚠️ No timestamps-backup.txt found, skipping timestamp restoration"
+            echo "⚠️ No timestamps backup file found, skipping timestamp restoration"
           fi
 
           # 验证：显示几个文件的时间
           echo "📅 Sample file timestamps:"
-          ls -lh wallpaper/desktop/动漫/二次元/ 2>/dev/null | head -5 || echo "Directory not found"
+          echo "Desktop:"
+          ls -lh wallpaper/desktop/动漫/二次元/ 2>/dev/null | head -3 || echo "Desktop directory not found"
+          echo "Mobile:"
+          ls -lh wallpaper/mobile/动漫/ 2>/dev/null | head -3 || echo "Mobile directory not found"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
