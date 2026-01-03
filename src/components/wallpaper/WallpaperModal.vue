@@ -283,6 +283,18 @@ const formattedDate = computed(() => props.wallpaper ? formatDate(props.wallpape
 const relativeTime = computed(() => props.wallpaper ? formatRelativeTime(props.wallpaper.createdAt) : '')
 const displayFilename = computed(() => props.wallpaper ? getDisplayFilename(props.wallpaper.filename) : '')
 
+// 分类信息显示
+const categoryDisplay = computed(() => {
+  if (!props.wallpaper)
+    return ''
+  const { category, subcategory } = props.wallpaper
+  if (!category)
+    return ''
+  if (subcategory)
+    return `${category} / ${subcategory}`
+  return category
+})
+
 // 原图分辨率信息（如果 JSON 数据中有分辨率但标签可能过时，使用 getResolutionLabel 重新计算）
 const originalResolution = computed(() => {
   if (!props.wallpaper?.resolution) {
@@ -509,6 +521,14 @@ onUnmounted(() => {
               <h3 class="info-title">
                 {{ displayFilename }}
               </h3>
+              <!-- 分类信息 -->
+              <div v-if="categoryDisplay" class="info-category">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                  <polyline points="9 22 9 12 15 12 15 22" />
+                </svg>
+                <span>{{ categoryDisplay }}</span>
+              </div>
               <div class="info-tags">
                 <!-- 紧凑布局显示原图清晰度，PC端显示预览图清晰度 -->
                 <span v-if="useCompactInfo && originalResolution" class="tag" :class="[`tag--${originalResolution.type || 'success'}`]">{{ originalResolution.label }}</span>
@@ -953,6 +973,24 @@ onUnmounted(() => {
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
   word-break: break-all;
+}
+
+.info-category {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  margin-top: $spacing-xs;
+  margin-bottom: $spacing-sm;
+  font-size: $font-size-sm;
+  color: var(--color-text-secondary);
+  font-weight: $font-weight-medium;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
 }
 
 .info-tags {

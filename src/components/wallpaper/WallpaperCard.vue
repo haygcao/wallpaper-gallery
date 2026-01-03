@@ -106,6 +106,18 @@ const highlightedFilename = computed(() => {
   return highlightText(displayFilename.value, props.searchQuery)
 })
 
+// 分类信息显示
+const categoryDisplay = computed(() => {
+  if (!props.wallpaper)
+    return ''
+  const { category, subcategory } = props.wallpaper
+  if (!category)
+    return ''
+  if (subcategory)
+    return `${category} / ${subcategory}`
+  return category
+})
+
 // 计算卡片图片样式 - 动态宽高比
 const cardImageStyle = computed(() => {
   if (props.viewMode === 'masonry')
@@ -265,6 +277,15 @@ function handleMouseLeave(e) {
         @error="handleImageError"
       >
 
+      <!-- 分类标签（移动端网格/瀑布流视图显示在图片上） -->
+      <div v-if="categoryDisplay && isMobile && (viewMode === 'grid' || viewMode === 'masonry')" class="card-category-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>
+        <span>{{ categoryDisplay }}</span>
+      </div>
+
       <!-- Overlay on hover (仅 PC 端显示) -->
       <div v-if="!isMobile" class="card-overlay">
         <div class="overlay-content">
@@ -289,6 +310,14 @@ function handleMouseLeave(e) {
           <span v-else>{{ part.text }}</span>
         </template>
       </p>
+      <!-- 分类信息 -->
+      <div v-if="categoryDisplay" class="card-category">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>
+        <span>{{ categoryDisplay }}</span>
+      </div>
       <!-- 第二行：文件大小、访问量、下载量 -->
       <div class="card-meta">
         <span class="meta-item">{{ formattedSize }}</span>
@@ -511,6 +540,61 @@ function handleMouseLeave(e) {
     font-weight: $font-weight-semibold;
     padding: 1px 4px;
     border-radius: 3px;
+  }
+}
+
+.card-category {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: $spacing-xs;
+  font-size: $font-size-xs;
+  color: var(--color-text-secondary);
+  font-weight: $font-weight-medium;
+
+  svg {
+    width: 12px;
+    height: 12px;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+
+  span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+// 移动端图片上的分类标签
+.card-category-badge {
+  position: absolute;
+  bottom: $spacing-xs;
+  left: $spacing-xs;
+  right: $spacing-xs;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  color: white;
+  font-size: 10px;
+  font-weight: $font-weight-medium;
+  border-radius: $radius-sm;
+  max-width: calc(100% - #{$spacing-xs} * 2);
+
+  svg {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+  }
+
+  span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
