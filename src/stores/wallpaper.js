@@ -32,6 +32,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
   // 加载状态
   const loading = ref(false)
   const error = ref(null)
+  const errorType = ref(null) // 'network' | 'parse' | 'format' | 'unknown'
 
   // 后台加载状态（用于控制 UI 是否显示加载中的数量变化）
   const isBackgroundLoading = ref(false)
@@ -39,18 +40,30 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
   // 首次加载完成后的初始数量（用于在后台加载期间稳定显示）
   const initialLoadedCount = ref(0)
 
+  // 系列总数量（从索引文件中获取，用于显示预期总数）
+  const expectedTotal = ref(0)
+
+  // 重试配置
+  const MAX_RETRIES = 3
+  const RETRY_DELAY = 1000 // 1秒
+
   // ========================================
   // Getters
   // ========================================
 
   const total = computed(() => wallpapers.value.length)
 
-  // 用于 UI 显示的稳定总数（后台加载期间不会变化）
+  // 用于 UI 显示的稳定总数（后台加载期间显示预期总数，避免误导用户）
   const displayTotal = computed(() => {
-    // 如果正在后台加载，显示初始加载的数量
-    if (isBackgroundLoading.value && initialLoadedCount.value > 0) {
-      return initialLoadedCount.value
+    // 如果正在后台加载且有预期总数，显示预期总数（避免误导用户）
+    if (isBackgroundLoading.value && expectedTotal.value > 0) {
+      return expectedTotal.value
     }
+    // 如果有预期总数且已加载完成，显示实际数量
+    if (expectedTotal.value > 0 && !isBackgroundLoading.value) {
+      return wallpapers.value.length
+    }
+    // 默认显示实际数量
     return wallpapers.value.length
   })
 
@@ -63,17 +76,110 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     const pngCount = items.filter(w => w.format === 'PNG').length
     const totalSize = items.reduce((sum, w) => sum + (w.size || 0), 0)
 
+    // 动态导入格式化函数（避免循环依赖）
+    let totalSizeFormatted = '0 B'
+    if (totalSize > 0) {
+      try {
+        // 使用简单的格式化逻辑，避免导入依赖
+        const units = ['B', 'KB', 'MB', 'GB']
+        const k = 1024
+        const i = Math.floor(Math.log(totalSize) / Math.log(k))
+        totalSizeFormatted = `${Number.parseFloat((totalSize / k ** i).toFixed(2))} ${units[i]}`
+      }
+      catch {
+        totalSizeFormatted = `${totalSize} B`
+      }
+    }
+
     return {
       total: items.length,
       jpg: jpgCount,
       png: pngCount,
       totalSize,
+      totalSizeFormatted,
     }
   })
 
   // ========================================
   // Helper Functions
   // ========================================
+
+  /**
+   * 分类错误类型
+   */
+  function classifyError(error) {
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      return 'network'
+    }
+    if (error.message && error.message.includes('HTTP error')) {
+      return 'network'
+    }
+    if (error instanceof SyntaxError || error.message.includes('JSON')) {
+      return 'parse'
+    }
+    if (error.message && (error.message.includes('Invalid') || error.message.includes('format'))) {
+      return 'format'
+    }
+    return 'unknown'
+  }
+
+  /**
+   * 获取用户友好的错误信息
+   */
+  function getErrorMessage(error, errorType, context = '') {
+    const contextStr = context ? ` (${context})` : ''
+    switch (errorType) {
+      case 'network':
+        return `网络连接失败，请检查网络设置${contextStr}`
+      case 'parse':
+        return `数据解析失败，可能是数据格式错误${contextStr}`
+      case 'format':
+        return `数据格式错误${contextStr}`
+      default:
+        return error.message || `加载失败${contextStr}`
+    }
+  }
+
+  /**
+   * 延迟函数
+   */
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  /**
+   * 带重试的 fetch 请求
+   */
+  async function fetchWithRetry(url, options = {}, retries = MAX_RETRIES) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch(url, options)
+        if (!response.ok) {
+          // 4xx 错误不重试
+          if (response.status >= 400 && response.status < 500) {
+            throw new Error(`HTTP error! status: ${response.status}`)
+          }
+          // 5xx 错误重试
+          if (i < retries - 1) {
+            await delay(RETRY_DELAY * (i + 1))
+            continue
+          }
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+        return response
+      }
+      catch (error) {
+        // 网络错误重试
+        if (error instanceof TypeError && error.message.includes('fetch')) {
+          if (i < retries - 1) {
+            await delay(RETRY_DELAY * (i + 1))
+            continue
+          }
+        }
+        throw error
+      }
+    }
+  }
 
   /**
    * 解码数据（优先使用 Worker，降级到主线程）
@@ -121,15 +227,22 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
 
     const seriesConfig = SERIES_CONFIG[seriesId]
     if (!seriesConfig) {
-      throw new Error(`Invalid series: ${seriesId}`)
+      const err = new Error(`Invalid series: ${seriesId}`)
+      errorType.value = 'format'
+      throw err
     }
 
     try {
-      const response = await fetch(seriesConfig.indexUrl)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+      const response = await fetchWithRetry(seriesConfig.indexUrl)
+      let data
+      try {
+        data = await response.json()
       }
-      const data = await response.json()
+      catch (parseError) {
+        const err = new Error(`Failed to parse JSON: ${parseError.message}`)
+        errorType.value = 'parse'
+        throw err
+      }
 
       // 解密分类列表（使用 Worker）
       let indexData
@@ -150,11 +263,26 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
         }
         catch (err) {
           console.warn('Failed to decode category index:', err)
-          indexData = data
+          // 如果解码失败，尝试使用原始数据
+          if (data.categories) {
+            indexData = data
+          }
+          else {
+            const decodeErr = new Error('Failed to decode category index')
+            errorType.value = 'parse'
+            throw decodeErr
+          }
         }
       }
       else {
         indexData = data
+      }
+
+      // 验证数据格式
+      if (!indexData.categories || !Array.isArray(indexData.categories)) {
+        const err = new Error('Invalid index data format: missing categories array')
+        errorType.value = 'format'
+        throw err
       }
 
       // 存入缓存
@@ -162,6 +290,8 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       return indexData
     }
     catch (e) {
+      const errType = classifyError(e)
+      errorType.value = errType
       console.error(`Failed to load series index for ${seriesId}:`, e)
       throw e
     }
@@ -180,16 +310,23 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
 
     const seriesConfig = SERIES_CONFIG[seriesId]
     if (!seriesConfig) {
-      throw new Error(`Invalid series: ${seriesId}`)
+      const err = new Error(`Invalid series: ${seriesId}`)
+      errorType.value = 'format'
+      throw err
     }
 
     try {
       const categoryUrl = `${seriesConfig.categoryBaseUrl}/${categoryFile}`
-      const response = await fetch(categoryUrl)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+      const response = await fetchWithRetry(categoryUrl)
+      let data
+      try {
+        data = await response.json()
       }
-      const data = await response.json()
+      catch (parseError) {
+        const err = new Error(`Failed to parse JSON for category ${categoryFile}: ${parseError.message}`)
+        errorType.value = 'parse'
+        throw err
+      }
 
       // 解密数据（使用 Worker）
       let wallpaperList
@@ -201,11 +338,24 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
         }
         catch (err) {
           console.warn(`Failed to decode category ${categoryFile}:`, err)
+          // 如果解码失败，尝试使用原始数据
           wallpaperList = data.wallpapers || []
+          if (!wallpaperList || !Array.isArray(wallpaperList)) {
+            const decodeErr = new Error(`Failed to decode category ${categoryFile}`)
+            errorType.value = 'parse'
+            throw decodeErr
+          }
         }
       }
       else {
         wallpaperList = data.wallpapers || []
+      }
+
+      // 验证数据格式
+      if (!Array.isArray(wallpaperList)) {
+        const err = new Error(`Invalid category data format: ${categoryFile}`)
+        errorType.value = 'format'
+        throw err
       }
 
       // 转换 URL
@@ -216,13 +366,16 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       return transformedList
     }
     catch (e) {
+      const errType = classifyError(e)
+      errorType.value = errType
       console.error(`Failed to load category ${categoryFile}:`, e)
       throw e
     }
   }
 
   /**
-   * 初始化系列（只加载前3个分类 - 首屏优化）
+   * 初始化系列（首屏优化：先加载前3个分类，后台加载剩余分类）
+   * 确保数据完整且不会出现数字递增的问题
    */
   async function initSeries(seriesId, forceRefresh = false) {
     // 如果已加载相同系列且有数据，跳过
@@ -230,47 +383,142 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       return
     }
 
+    // 立即清空旧数据，避免切换系列时显示旧图片
+    wallpapers.value = []
+    
     loading.value = true
     error.value = null
+    errorType.value = null
     currentLoadedSeries.value = seriesId
     loadedCategories.value = new Set()
     isBackgroundLoading.value = false
     initialLoadedCount.value = 0
+    expectedTotal.value = 0
 
     try {
       // 1. 加载分类索引
       const indexData = await loadSeriesIndex(seriesId)
 
-      // 2. 只加载前3个分类（首屏优化）
+      // 2. 记录预期总数（从索引文件中获取，用于显示）
+      expectedTotal.value = indexData.total || 0
+
+      // 3. 首屏优化：只加载前3个分类（快速显示）
       const initialCategories = indexData.categories.slice(0, 3)
-      const categoryPromises = initialCategories.map(cat => loadCategory(seriesId, cat.file))
-      const categoryDataArrays = await Promise.all(categoryPromises)
+      const initialPromises = initialCategories.map(cat => loadCategory(seriesId, cat.file))
+      const initialDataArrays = await Promise.all(initialPromises)
 
-      // 3. 合并数据
-      wallpapers.value = categoryDataArrays.flat()
+      // 4. 立即显示前3个分类的数据
+      wallpapers.value = initialDataArrays.flat()
 
-      // 4. 记录已加载的分类
+      // 5. 记录已加载的分类
       initialCategories.forEach((cat) => {
         loadedCategories.value.add(cat.file)
       })
 
-      // 5. 记录初始加载数量（用于 UI 稳定显示）
+      // 6. 记录初始加载数量（用于 UI 稳定显示）
       initialLoadedCount.value = wallpapers.value.length
 
-      // 6. 后台异步加载剩余分类（不阻塞）
+      // 7. 清除错误状态
+      error.value = null
+      errorType.value = null
+
+      // 8. 后台加载剩余分类（不阻塞主流程）
       const remainingCategories = indexData.categories.slice(3)
       if (remainingCategories.length > 0) {
         isBackgroundLoading.value = true
-        loadRemainingCategories(seriesId, remainingCategories)
+        // 后台加载，但不更新 wallpapers，而是收集完整数据后一次性更新
+        loadRemainingCategoriesSilently(seriesId, remainingCategories)
+      }
+      else {
+        // 如果没有剩余分类，直接设置预期总数为实际数量
+        expectedTotal.value = wallpapers.value.length
       }
     }
     catch (e) {
       console.error(`Failed to init series ${seriesId}:`, e)
-      error.value = e.message || '加载壁纸数据失败'
+      const errType = errorType.value || classifyError(e)
+      errorType.value = errType
+      error.value = getErrorMessage(e, errType, `系列: ${seriesId}`)
       wallpapers.value = []
     }
     finally {
       loading.value = false
+    }
+  }
+
+  /**
+   * 后台静默加载剩余分类（收集完整数据后一次性更新，避免数字递增）
+   */
+  async function loadRemainingCategoriesSilently(seriesId, categories) {
+    try {
+      // 批量加载：每次加载3个分类
+      const BATCH_SIZE = 3
+      const batches = []
+
+      for (let i = 0; i < categories.length; i += BATCH_SIZE) {
+        batches.push(categories.slice(i, i + BATCH_SIZE))
+      }
+
+      // 收集所有后台加载的数据
+      const allRemainingData = []
+
+      for (const batch of batches) {
+        // 检查系列是否已切换，如果切换则停止加载
+        if (currentLoadedSeries.value !== seriesId) {
+          return
+        }
+
+        // 过滤已加载的分类
+        const unloadedBatch = batch.filter(cat => !loadedCategories.value.has(cat.file))
+        if (unloadedBatch.length === 0)
+          continue
+
+        try {
+          // 并行加载批次内的所有分类
+          const batchPromises = unloadedBatch.map(cat => loadCategory(seriesId, cat.file))
+          const batchResults = await Promise.all(batchPromises)
+
+          // 再次检查系列是否已切换（加载完成后）
+          if (currentLoadedSeries.value !== seriesId) {
+            return
+          }
+
+          // 收集本批次的数据（不立即更新 wallpapers）
+          const batchData = batchResults.flat()
+          allRemainingData.push(...batchData)
+
+          // 标记本批次的分类为已加载
+          unloadedBatch.forEach((cat) => {
+            loadedCategories.value.add(cat.file)
+          })
+
+          // 批次间暂停，避免阻塞主线程
+          await delay(150)
+        }
+        catch (e) {
+          console.warn(`Failed to load batch:`, e)
+          // 继续加载下一批次
+        }
+      }
+
+      // 所有后台数据加载完成后，一次性更新 wallpapers（避免数字递增）
+      if (currentLoadedSeries.value === seriesId && allRemainingData.length > 0) {
+        // 先关闭后台加载标记，再更新数据
+        // 这样 displayTotal 会立即显示完整数量，不会出现中间状态
+        isBackgroundLoading.value = false
+        // 一次性追加所有剩余数据
+        wallpapers.value = [...wallpapers.value, ...allRemainingData]
+        // 更新初始加载数量（现在显示完整数量）
+        initialLoadedCount.value = wallpapers.value.length
+      }
+      else {
+        // 如果没有数据或系列已切换，也要关闭后台加载标记
+        isBackgroundLoading.value = false
+      }
+    }
+    catch (e) {
+      console.error('Background loading failed:', e)
+      isBackgroundLoading.value = false
     }
   }
 
@@ -287,6 +535,11 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     }
 
     for (const batch of batches) {
+      // 检查系列是否已切换，如果切换则停止加载
+      if (currentLoadedSeries.value !== seriesId) {
+        return
+      }
+
       // 过滤已加载的分类
       const unloadedBatch = batch.filter(cat => !loadedCategories.value.has(cat.file))
       if (unloadedBatch.length === 0)
@@ -296,6 +549,11 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
         // 并行加载批次内的所有分类
         const batchPromises = unloadedBatch.map(cat => loadCategory(seriesId, cat.file))
         const batchResults = await Promise.all(batchPromises)
+
+        // 再次检查系列是否已切换（加载完成后）
+        if (currentLoadedSeries.value !== seriesId) {
+          return
+        }
 
         // 合并本批次的数据
         const batchData = batchResults.flat()
@@ -317,9 +575,11 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       }
     }
 
-    // 后台加载完成，更新状态
-    isBackgroundLoading.value = false
-    initialLoadedCount.value = wallpapers.value.length
+    // 后台加载完成，更新状态（仅当系列未切换时）
+    if (currentLoadedSeries.value === seriesId) {
+      isBackgroundLoading.value = false
+      initialLoadedCount.value = wallpapers.value.length
+    }
   }
 
   /**
@@ -410,6 +670,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     wallpapers,
     loading,
     error,
+    errorType,
     currentLoadedSeries,
     loadedCategories,
     isBackgroundLoading,

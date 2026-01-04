@@ -11,6 +11,8 @@ const { initTheme } = useTheme()
 // Initialize
 onMounted(() => {
   initTheme()
+  // 触发预渲染完成事件（用于 vite-plugin-prerender）
+  document.dispatchEvent(new Event('render-event'))
 })
 </script>
 

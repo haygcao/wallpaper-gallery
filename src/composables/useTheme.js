@@ -83,13 +83,18 @@ export function useTheme() {
       themeMode.value = THEME_MODES.SYSTEM
     }
 
-    // 计算并应用主题
+    // 计算并应用主题（立即应用，避免闪烁）
     theme.value = computeTheme(themeMode.value)
     applyTheme()
 
     // 如果是自动模式，启动时间检查
     if (themeMode.value === THEME_MODES.AUTO) {
       startTimeCheck()
+      // 立即检查一次时间（因为定时器是每分钟检查一次）
+      const currentTheme = getThemeByTime()
+      if (theme.value !== currentTheme) {
+        theme.value = currentTheme
+      }
     }
   }
 

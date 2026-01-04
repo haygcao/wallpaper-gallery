@@ -3,10 +3,13 @@
  * 竖屏壁纸弹窗组件
  * 专为手机壁纸、头像等竖屏图片设计
  * 布局：图片居中显示，信息面板在底部
+ * 电脑端和手机端：统一支持真机显示模式（显示手机框架）
  */
 import { gsap } from 'gsap'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import PhoneFrame from '@/components/wallpaper/PhoneFrame.vue'
+import { useDevice } from '@/composables/useDevice'
 import { useWallpaperType } from '@/composables/useWallpaperType'
 import { trackWallpaperDownload, trackWallpaperPreview } from '@/utils/analytics'
 import { downloadFile, formatDate, formatFileSize, getDisplayFilename, getFileExtension, getResolutionLabel } from '@/utils/format'
@@ -28,9 +31,23 @@ const emit = defineEmits(['close', 'prev', 'next'])
 // 获取当前系列
 const { currentSeries } = useWallpaperType()
 
+// 设备检测
+const { isMobile } = useDevice()
+
+// 是否支持真机显示（手机壁纸和头像系列）
+const canUseDeviceMode = computed(() => ['mobile', 'avatar'].includes(currentSeries.value))
+
+// 是否为头像系列（正方形图片，需要特殊布局）
+const isAvatarSeries = computed(() => currentSeries.value === 'avatar')
+
+// 真机显示模式（统一用于电脑端和手机端）
+const isDeviceMode = ref(false)
+const showControls = ref(false) // 真机模式下是否显示控制按钮
+
 const modalRef = ref(null)
 const contentRef = ref(null)
 const infoRef = ref(null)
+const phoneFrameRef = ref(null)
 const imageLoaded = ref(false)
 const imageError = ref(false)
 const downloading = ref(false)
@@ -114,21 +131,27 @@ function animateIn() {
   if (!modalRef.value || !contentRef.value)
     return
 
-  const tl = gsap.timeline()
+  // 先设置初始状态，防止闪烁
+  // 使用 visibility: hidden 配合 opacity: 0 确保元素在动画前完全不可见
+  gsap.set(modalRef.value, { opacity: 0, visibility: 'visible' })
+  gsap.set(contentRef.value, { scale: 0.9, y: 30, opacity: 0 })
 
-  tl.fromTo(modalRef.value, {
-    opacity: 0,
-  }, {
+  const tl = gsap.timeline({
+    onComplete: () => {
+      // 动画完成后清除 transform，避免留下 translate(0px, 0px)
+      if (contentRef.value) {
+        gsap.set(contentRef.value, { clearProps: 'transform' })
+      }
+    },
+  })
+
+  tl.to(modalRef.value, {
     opacity: 1,
     duration: 0.3,
     ease: 'power2.out',
   })
 
-  tl.fromTo(contentRef.value, {
-    scale: 0.9,
-    y: 30,
-    opacity: 0,
-  }, {
+  tl.to(contentRef.value, {
     scale: 1,
     y: 0,
     opacity: 1,
@@ -176,6 +199,10 @@ function animateOut(callback) {
 
 // Reset state when wallpaper changes
 watch(() => props.wallpaper, () => {
+  // 切换壁纸时退出真机模式
+  if (isDeviceMode.value) {
+    exitDeviceMode()
+  }
   imageLoaded.value = false
   imageError.value = false
   actualDimensions.value = { width: 0, height: 0 }
@@ -206,8 +233,37 @@ const formattedSize = computed(() => props.wallpaper ? formatFileSize(props.wall
 const formattedDate = computed(() => props.wallpaper ? formatDate(props.wallpaper.createdAt) : '')
 const displayFilename = computed(() => props.wallpaper ? getDisplayFilename(props.wallpaper.filename) : '')
 
-// 原图分辨率信息
-const originalResolution = computed(() => props.wallpaper?.resolution || null)
+// 分类信息显示
+const categoryDisplay = computed(() => {
+  if (!props.wallpaper)
+    return ''
+  const { category, subcategory } = props.wallpaper
+  if (!category)
+    return ''
+  if (subcategory)
+    return `${category} / ${subcategory}`
+  return category
+})
+
+// 原图分辨率信息（如果 JSON 数据中有分辨率但标签可能过时，使用 getResolutionLabel 重新计算）
+const originalResolution = computed(() => {
+  if (!props.wallpaper?.resolution) {
+    return null
+  }
+  const res = props.wallpaper.resolution
+  // 如果分辨率对象有 width 和 height，使用 getResolutionLabel 确保标签是最新的（支持16K）
+  if (res.width && res.height) {
+    const updatedLabel = getResolutionLabel(res.width, res.height)
+    return {
+      width: res.width,
+      height: res.height,
+      label: updatedLabel.label,
+      type: updatedLabel.type,
+    }
+  }
+  // 如果没有 width/height，直接返回原始数据
+  return res
+})
 
 // Handlers
 function handleImageLoad(e) {
@@ -228,6 +284,10 @@ function handleImageError() {
 }
 
 function handleClose() {
+  // 如果正在真机模式，先退出
+  if (isDeviceMode.value) {
+    exitDeviceMode()
+  }
   animateOut(() => {
     emit('close')
   })
@@ -239,6 +299,110 @@ function handlePrev() {
 
 function handleNext() {
   emit('next')
+}
+
+// 切换真机显示模式（电脑端和手机端统一）
+async function toggleDeviceMode() {
+  if (isDeviceMode.value) {
+    // 退出真机模式：直接退出，无动画
+    exitDeviceMode()
+  }
+  else {
+    // 进入真机模式：添加进入动画
+    isDeviceMode.value = true
+    document.body.classList.add('device-mode')
+    showControls.value = true
+    document.body.classList.add('show-controls')
+
+    await nextTick()
+    animateDeviceModeIn()
+
+    // 5秒后自动隐藏控制按钮（延长显示时间，让用户看到退出提示）
+    setTimeout(() => {
+      if (isDeviceMode.value) {
+        showControls.value = false
+        document.body.classList.remove('show-controls')
+      }
+    }, 5000)
+  }
+}
+
+// 真机模式进入动画（优化性能，使用硬件加速）
+function animateDeviceModeIn() {
+  if (!phoneFrameRef.value)
+    return
+
+  // PhoneFrame 是组件，需要访问其根元素
+  const phoneFrameWrapper = phoneFrameRef.value.$el?.closest('.phone-frame-wrapper')
+  const phoneFrame = phoneFrameRef.value.$el
+  if (!phoneFrameWrapper || !phoneFrame)
+    return
+
+  // 启用硬件加速，优化性能
+  gsap.set(phoneFrame, {
+    willChange: 'transform, opacity',
+    force3D: true,
+  })
+
+  // 重置初始状态
+  gsap.set(phoneFrame, {
+    scale: 0.9,
+    opacity: 0,
+    y: 30,
+  })
+
+  // 执行进入动画（使用更流畅的缓动函数和更短的时长）
+  gsap.to(phoneFrame, {
+    scale: 1,
+    opacity: 1,
+    y: 0,
+    duration: 0.4, // 缩短动画时长，更快速流畅
+    ease: 'power2.out', // 使用更简单的缓动函数，性能更好
+    force3D: true, // 强制使用 3D 变换，启用硬件加速
+    onComplete: () => {
+      // 动画完成后清理 will-change，避免影响后续性能
+      gsap.set(phoneFrame, { willChange: 'auto', clearProps: 'force3D' })
+    },
+  })
+
+  // 不修改弹窗背景，完全通过 CSS 类控制
+
+  // 控制按钮淡入（延迟更多，让手机框架动画先完成）
+  if (infoRef.value) {
+    gsap.fromTo(infoRef.value, {
+      opacity: 0,
+      y: 10,
+    }, {
+      opacity: 1,
+      y: 0,
+      duration: 0.25,
+      delay: 0.2, // 延迟执行，避免同时动画
+      ease: 'power2.out',
+    })
+  }
+}
+
+// 退出真机显示模式（只退出真机模式，不影响弹窗状态，无动画）
+function exitDeviceMode() {
+  // 直接退出真机模式状态，不执行动画，不修改任何样式
+  // 背景颜色完全由 CSS 类控制，移除类后自动恢复
+  isDeviceMode.value = false
+  document.body.classList.remove('device-mode')
+  document.body.classList.remove('show-controls')
+  showControls.value = false
+}
+
+// 真机模式下点击屏幕切换控制按钮显示
+function toggleControls() {
+  if (isDeviceMode.value) {
+    showControls.value = !showControls.value
+    if (showControls.value) {
+      document.body.classList.add('show-controls')
+    }
+    else {
+      document.body.classList.remove('show-controls')
+    }
+  }
 }
 
 async function handleDownload() {
@@ -264,13 +428,22 @@ function handleKeydown(e) {
 
   switch (e.key) {
     case 'Escape':
-      handleClose()
+      if (isDeviceMode.value) {
+        exitDeviceMode()
+      }
+      else {
+        handleClose()
+      }
       break
     case 'ArrowLeft':
-      handlePrev()
+      if (!isDeviceMode.value) {
+        handlePrev()
+      }
       break
     case 'ArrowRight':
-      handleNext()
+      if (!isDeviceMode.value) {
+        handleNext()
+      }
       break
   }
 }
@@ -282,6 +455,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
   document.body.classList.remove('modal-open')
+  document.body.classList.remove('device-mode')
   document.body.style.top = ''
   if (savedScrollY.value > 0) {
     window.scrollTo({ top: savedScrollY.value, behavior: 'instant' })
@@ -291,57 +465,127 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="isOpen && wallpaper" ref="modalRef" class="portrait-modal-overlay" @click.self="handleClose">
-      <div ref="contentRef" class="portrait-modal-content">
+    <div
+      v-if="isOpen && wallpaper"
+      ref="modalRef"
+      class="portrait-modal-overlay"
+      :class="{ 'is-device-mode-overlay': isDeviceMode && isMobile && canUseDeviceMode }"
+      style="opacity: 0; visibility: hidden"
+      @click.self="handleClose"
+    >
+      <div ref="contentRef" class="portrait-modal-content" :class="{ 'is-device-mode-content': isDeviceMode && isMobile && canUseDeviceMode, 'is-avatar-content': isAvatarSeries }">
         <!-- Close Button -->
-        <button class="modal-close" aria-label="关闭" @click="handleClose">
+        <button
+          class="modal-close"
+          :class="{ 'is-hidden': isDeviceMode && !showControls }"
+          aria-label="关闭"
+          @click="handleClose"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 6L6 18M6 6l12 12" />
           </svg>
         </button>
 
+        <!-- 真机模式退出提示 -->
+        <div
+          v-if="isDeviceMode && canUseDeviceMode"
+          class="device-mode-exit-hint"
+          :class="{ 'is-visible': showControls }"
+          @click="exitDeviceMode"
+        >
+          <div class="hint-content">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+            <span>点击退出真机显示</span>
+          </div>
+        </div>
+
         <!-- Navigation Buttons -->
-        <button class="modal-nav modal-nav--prev" aria-label="上一张" @click="handlePrev">
+        <button
+          v-if="!isDeviceMode"
+          class="modal-nav modal-nav--prev"
+          aria-label="上一张"
+          @click="handlePrev"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M15 18l-6-6 6-6" />
           </svg>
         </button>
 
-        <button class="modal-nav modal-nav--next" aria-label="下一张" @click="handleNext">
+        <button
+          v-if="!isDeviceMode"
+          class="modal-nav modal-nav--next"
+          aria-label="下一张"
+          @click="handleNext"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 18l6-6-6-6" />
           </svg>
         </button>
 
         <!-- Image Container - 竖屏布局 -->
-        <div class="portrait-image-container">
-          <!-- Loading -->
-          <div v-if="!imageLoaded" class="modal-loading">
-            <LoadingSpinner size="lg" />
-          </div>
-
-          <!-- Error -->
-          <div v-else-if="imageError" class="modal-error">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M12 8v4M12 16h.01" />
-            </svg>
-            <p>图片加载失败</p>
-          </div>
-
-          <!-- Image -->
-          <img
-            v-show="imageLoaded && !imageError"
-            :src="wallpaper.url"
-            :alt="wallpaper.filename"
-            class="portrait-image"
-            @load="handleImageLoad"
-            @error="handleImageError"
+        <div
+          class="portrait-image-container"
+          :class="{ 'is-device-mode': isDeviceMode, 'is-avatar-container': isAvatarSeries }"
+          @click="toggleControls"
+        >
+          <!-- 真机显示模式：显示手机框架（统一用于电脑端和手机端） -->
+          <PhoneFrame
+            v-if="isDeviceMode && canUseDeviceMode && imageLoaded && !imageError"
+            ref="phoneFrameRef"
+            class="phone-frame-wrapper"
+            :class="{ 'phone-frame-wrapper--device-mode': isMobile }"
           >
+            <img
+              :src="wallpaper.url"
+              :alt="wallpaper.filename"
+              class="portrait-image portrait-image--in-frame"
+              :class="{ 'portrait-image--avatar': currentSeries === 'avatar' }"
+              @load="handleImageLoad"
+              @error="handleImageError"
+            >
+          </PhoneFrame>
+
+          <!-- 非真机模式：直接显示图片 -->
+          <template v-else>
+            <!-- Loading -->
+            <div v-if="!imageLoaded" class="modal-loading">
+              <LoadingSpinner size="lg" />
+            </div>
+
+            <!-- Error -->
+            <div v-else-if="imageError" class="modal-error">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M12 8v4M12 16h.01" />
+              </svg>
+              <p>图片加载失败</p>
+            </div>
+
+            <!-- Image -->
+            <img
+              v-show="imageLoaded && !imageError"
+              :src="wallpaper.url"
+              :alt="wallpaper.filename"
+              class="portrait-image"
+              :class="{
+                'portrait-image--device-mode': isDeviceMode,
+                'portrait-image--loaded': imageLoaded && !imageError,
+                'portrait-image--avatar': isAvatarSeries,
+              }"
+              @load="handleImageLoad"
+              @error="handleImageError"
+            >
+          </template>
         </div>
 
         <!-- Info Panel - 底部信息栏 -->
-        <div ref="infoRef" class="portrait-info">
+        <div
+          ref="infoRef"
+          class="portrait-info"
+          :class="{ 'is-hidden': isDeviceMode && !showControls }"
+        >
           <!-- 图片加载中显示骨架屏 -->
           <template v-if="!imageLoaded || imageError">
             <div class="info-skeleton-compact">
@@ -362,6 +606,14 @@ onUnmounted(() => {
               <h3 class="info-title">
                 {{ displayFilename }}
               </h3>
+              <!-- 分类信息 -->
+              <div v-if="categoryDisplay" class="info-category">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                  <polyline points="9 22 9 12 15 12 15 22" />
+                </svg>
+                <span>{{ categoryDisplay }}</span>
+              </div>
               <div class="info-meta">
                 <div class="info-tags">
                   <span class="tag" :class="[`tag--${resolution.type || 'success'}`]">{{ resolution.label }}</span>
@@ -393,17 +645,36 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <button
-              class="download-btn"
-              :disabled="downloading"
-              @click="handleDownload"
-            >
-              <LoadingSpinner v-if="downloading" size="sm" />
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-              </svg>
-              <span class="btn-text">{{ downloading ? '下载中' : '下载' }}</span>
-            </button>
+            <div class="info-actions">
+              <!-- 真机显示按钮（电脑端和手机端都显示，仅限手机壁纸和头像系列） -->
+              <button
+                v-if="canUseDeviceMode"
+                class="device-mode-btn"
+                :class="{ 'is-active': isDeviceMode }"
+                @click="toggleDeviceMode"
+              >
+                <svg v-if="!isDeviceMode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8M12 17v4" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+                <span class="btn-text">{{ isDeviceMode ? '退出真机' : '真机显示' }}</span>
+              </button>
+
+              <button
+                class="download-btn"
+                :disabled="downloading"
+                @click="handleDownload"
+              >
+                <LoadingSpinner v-if="downloading" size="sm" />
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                </svg>
+                <span class="btn-text">{{ downloading ? '下载中' : '下载' }}</span>
+              </button>
+            </div>
           </template>
         </div>
       </div>
@@ -419,9 +690,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  // 初始状态：透明，防止闪烁
+  opacity: 0;
+  // 普通弹窗：朦胧感的遮罩层
   background: var(--color-bg-modal);
   backdrop-filter: blur(12px);
   padding: $spacing-md;
+
+  // 真机显示模式下：全屏白色背景，无 padding，靠上对齐
+  &.is-device-mode-overlay {
+    padding: 0;
+    align-items: flex-start; // 靠上对齐
+    background: #ffffff; // 真机显示时才用白色背景
+    backdrop-filter: none; // 真机显示时不需要模糊
+  }
 }
 
 .portrait-modal-content {
@@ -443,6 +725,29 @@ onUnmounted(() => {
     min-height: 75vh; // 移动端更高一些
     max-height: 95vh;
   }
+
+  // 真机模式下：移除圆角，全屏显示
+  &.is-device-mode-content {
+    width: 100vw;
+    max-width: 100%;
+    height: 100vh;
+    min-height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  // 头像系列：自适应高度，不设置固定最小高度
+  &.is-avatar-content {
+    min-height: auto; // 取消最小高度限制
+    max-height: 90vh;
+
+    @include mobile-only {
+      min-height: auto;
+      max-height: 95vh;
+    }
+  }
 }
 
 .modal-close {
@@ -463,6 +768,11 @@ onUnmounted(() => {
   &:hover {
     background: rgba(0, 0, 0, 0.7);
     transform: scale(1.1);
+  }
+
+  &.is-hidden {
+    opacity: 0;
+    pointer-events: none;
   }
 
   svg {
@@ -505,6 +815,68 @@ onUnmounted(() => {
   }
 }
 
+// 真机模式退出提示
+.device-mode-exit-hint {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  cursor: pointer;
+
+  &.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .hint-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(12px);
+    border-radius: $radius-xl;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    transition: all 0.2s ease;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.95);
+      transform: scale(1.05);
+    }
+
+    &:active {
+      transform: scale(0.98);
+    }
+
+    svg {
+      width: 18px;
+      height: 18px;
+    }
+  }
+
+  @include mobile-only {
+    top: 15px;
+
+    .hint-content {
+      padding: 8px 16px;
+      font-size: 13px;
+
+      svg {
+        width: 16px;
+        height: 16px;
+      }
+    }
+  }
+}
+
 .portrait-image-container {
   position: relative;
   display: flex;
@@ -512,13 +884,77 @@ onUnmounted(() => {
   justify-content: center;
   flex: 1;
   min-height: 60vh; // 竖屏壁纸需要更大的初始高度,避免加载后弹窗突然变大
-  max-height: 70vh;
+  // max-height: 70vh;
   background: var(--color-bg-primary);
   overflow: hidden;
 
+  // 真机显示模式：全屏显示
+  &.is-device-mode {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    min-height: 100vh;
+    max-height: 100vh;
+    // 使用更柔和的背景色，避免与图片对比太强烈
+    background: #f5f5f5; // 浅灰色背景，比纯白更柔和
+    transition: background-color 0.2s ease;
+  }
+
+  // 头像系列：自适应高度，正方形图片不需要固定最小高度
+  &.is-avatar-container {
+    min-height: auto; // 取消最小高度限制，让图片自适应
+    flex: 0 0 auto; // 不拉伸，按内容高度显示
+    aspect-ratio: 1 / 1; // 保持正方形比例
+    max-width: 100%;
+    width: 100%; // 宽度撑满
+  }
+
   @include mobile-only {
     min-height: 55vh; // 移动端稍小一些
-    max-height: 65vh;
+    // max-height: 65vh;
+
+    // 头像系列移动端也自适应
+    &.is-avatar-container {
+      min-height: auto;
+    }
+  }
+}
+
+// 手机框架包装器
+.phone-frame-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: $spacing-lg;
+
+  .phone-frame {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    margin: 0 auto; // 确保居中
+  }
+
+  // 真机显示模式下的样式
+  &--device-mode {
+    padding: 0;
+    // align-items: flex-start; // 靠上对齐
+    justify-content: center;
+
+    .phone-frame {
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      margin: 0;
+      align-items: flex-start; // 手机框架也靠上
+    }
   }
 }
 
@@ -541,8 +977,56 @@ onUnmounted(() => {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  // 初始状态：透明，避免白色背景闪烁
   opacity: 0;
-  animation: imageReveal 0.5s ease forwards;
+  // 图片加载完成后通过类名触发动画
+  transition: opacity 0.3s ease;
+
+  // 头像图片（非真机模式）：正方形自适应
+  &--avatar {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+  }
+
+  // 在手机框架中的样式
+  &--in-frame {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover; // 手机壁纸使用 cover 填充整个屏幕区域
+    object-position: center; // 居中显示
+    display: block; // 确保是块级元素
+    // 真机模式下的图片直接显示，不需要动画
+    opacity: 1;
+    transition: none;
+  }
+
+  // 头像壁纸：使用 contain 保持完整显示，避免上下留白
+  &--in-frame.portrait-image--avatar {
+    object-fit: contain; // 头像使用 contain 保持完整显示
+    background: #000000; // 黑色背景填充空白区域
+  }
+
+  // 真机显示模式：全屏显示
+  &--device-mode {
+    width: 100vw;
+    height: 100vh;
+    object-fit: cover;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 2000;
+  }
+}
+
+// 图片加载完成后的样式
+.portrait-image--loaded {
+  opacity: 1;
+  animation: imageReveal 0.4s ease forwards;
 }
 
 @keyframes imageReveal {
@@ -564,6 +1048,12 @@ onUnmounted(() => {
   padding: $spacing-md;
   background: var(--color-bg-card);
   border-top: 1px solid var(--color-border);
+  transition: opacity var(--transition-fast);
+
+  &.is-hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
 
   @include mobile-only {
     padding: $spacing-sm;
@@ -577,6 +1067,24 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: $spacing-xs;
+}
+
+.info-category {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  // margin-top: $spacing-xs;
+  margin-bottom: $spacing-xs;
+  font-size: $font-size-sm;
+  color: var(--color-text-secondary);
+  font-weight: $font-weight-medium;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
 }
 
 .info-title {
@@ -689,6 +1197,63 @@ onUnmounted(() => {
     content: '·';
     margin-left: $spacing-xs;
     color: var(--color-text-muted);
+  }
+}
+
+.info-actions {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-shrink: 0;
+}
+
+.device-mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 10px; // 减小按钮大小
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+  font-size: 12px; // 减小字体
+  font-weight: $font-weight-medium;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+
+  &:hover {
+    background: var(--color-bg-active);
+    transform: translateY(-1px);
+  }
+
+  &.is-active {
+    background: var(--color-accent);
+    color: white;
+    border-color: var(--color-accent);
+  }
+
+  svg {
+    width: 14px; // 减小图标
+    height: 14px;
+  }
+
+  .btn-text {
+    font-size: 12px;
+  }
+
+  @include mobile-only {
+    padding: 4px 8px;
+    gap: 3px;
+
+    svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .btn-text {
+      font-size: 11px;
+    }
   }
 }
 

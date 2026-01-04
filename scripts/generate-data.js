@@ -372,29 +372,35 @@ function getImageDimensions(filePath) {
 function getResolutionLabel(width, height) {
   const maxDim = Math.max(width, height)
 
-  if (maxDim >= 7680) {
+  if (maxDim >= 15360) {
+    return { label: '16K', type: 'danger' }
+  }
+  else if (maxDim >= 7680) {
     return { label: '8K', type: 'danger' }
   }
   else if (maxDim >= 5760) {
     return { label: '6K', type: 'warning' }
   }
   else if (maxDim >= 5120) {
-    return { label: '5K', type: 'warning' }
+    return { label: '5K+', type: 'danger' }
+  }
+  else if (maxDim >= 4096) {
+    return { label: '4K+', type: 'warning' }
   }
   else if (maxDim >= 3840) {
-    return { label: '4K', type: 'warning' }
+    return { label: '4K', type: 'success' }
   }
   else if (maxDim >= 2048) {
     return { label: '2K', type: 'info' }
   }
   else if (maxDim >= 1920) {
-    return { label: '1080P', type: 'success' }
+    return { label: '超清', type: 'primary' }
   }
   else if (maxDim >= 1280) {
-    return { label: '720P', type: 'primary' }
+    return { label: '高清', type: 'secondary' }
   }
   else {
-    return { label: 'SD', type: 'secondary' }
+    return { label: '标清', type: 'secondary' }
   }
 }
 

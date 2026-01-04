@@ -502,6 +502,47 @@ body.fullscreen-mode {
   }
 }
 
+// ========================================
+// 真机显示模式（手机端全屏显示壁纸）
+// ========================================
+body.device-mode {
+  overflow: hidden !important;
+
+  .app-header,
+  .app-footer,
+  .filter-panel,
+  .wallpaper-grid-wrapper {
+    display: none !important;
+  }
+
+  .portrait-modal-overlay {
+    background: #ffffff !important; // 真机显示模式也是白色背景
+  }
+
+  .portrait-modal-content {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .modal-close,
+  .modal-nav,
+  .portrait-info {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+
+  // 点击屏幕显示/隐藏控制按钮
+  &.show-controls {
+    .modal-close,
+    .modal-nav,
+    .portrait-info {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+}
+
 @keyframes fadeInOut {
   0% {
     opacity: 0;

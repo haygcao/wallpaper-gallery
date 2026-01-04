@@ -122,11 +122,13 @@ export const usePopularityStore = defineStore('popularity', () => {
       return
     }
 
+    // 立即清空旧数据，避免切换系列时显示旧数据
+    allTimeData.value = []
+    weeklyData.value = []
+    monthlyData.value = []
+
     // 检查 Supabase 是否配置
     if (!isSupabaseConfigured()) {
-      allTimeData.value = []
-      weeklyData.value = []
-      monthlyData.value = []
       currentSeries.value = series
       return
     }

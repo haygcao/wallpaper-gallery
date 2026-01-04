@@ -21,14 +21,8 @@ const canvasRef = ref(null)
 // 状态
 const currentIndex = ref(0)
 const isAnimating = ref(false)
-const isEntered = ref(false)
 const isHovering = ref(false)
-const cardEntered = ref({})
 const imageLoaded = ref({})
-
-// 图片预加载状态
-const isPreloading = ref(true)
-const preloadProgress = ref(0)
 
 // 鼠标位置追踪（科技感光效）
 const mousePos = ref({ x: 0, y: 0 })
@@ -84,21 +78,6 @@ function getCardStyle(index) {
   const total = extendedList.value.length
   if (total === 0)
     return {}
-
-  // 入场动画前的初始位置
-  if (!cardEntered.value[index]) {
-    let relativePos = index - currentIndex.value
-    if (relativePos > total / 2)
-      relativePos -= total
-    if (relativePos < -total / 2)
-      relativePos += total
-    const startX = relativePos * 800
-    return {
-      transform: `translateX(${startX}px) translateZ(-800px) rotateY(0deg) scale(0.3)`,
-      opacity: 0,
-      zIndex: 0,
-    }
-  }
 
   let relativePos = index - currentIndex.value
   if (relativePos > total / 2)
@@ -251,35 +230,6 @@ function isImageLoaded(id) {
   return !!imageLoaded.value[id]
 }
 
-// 预加载所有图片
-async function preloadImages(list) {
-  if (list.length === 0)
-    return
-
-  isPreloading.value = true
-  preloadProgress.value = 0
-
-  const imagePromises = list.map((wallpaper, index) => {
-    return new Promise((resolve) => {
-      const img = new Image()
-      img.onload = () => {
-        imageLoaded.value[wallpaper.id] = true
-        preloadProgress.value = Math.round(((index + 1) / list.length) * 100)
-        resolve()
-      }
-      img.onerror = () => {
-        // 加载失败也标记为完成，避免卡住
-        preloadProgress.value = Math.round(((index + 1) / list.length) * 100)
-        resolve()
-      }
-      img.src = wallpaper.previewUrl || wallpaper.thumbnailUrl
-    })
-  })
-
-  await Promise.all(imagePromises)
-  isPreloading.value = false
-}
-
 // ============ 星空 + 流星动画 ============
 function initStarfield() {
   const canvas = canvasRef.value
@@ -393,60 +343,28 @@ function destroyStarfield() {
   }
 }
 
-// 入场动画
-function playEnterAnimation() {
-  isEntered.value = false
-  cardEntered.value = {}
+// 监听 series 变化，立即清空状态（避免显示旧图片）
+watch(() => props.series, (newSeries, oldSeries) => {
+  if (newSeries !== oldSeries && oldSeries) {
+    // 系列切换时，立即清空所有状态
+    imageLoaded.value = {}
+    currentIndex.value = 0
+    stopAutoPlay()
+    destroyStarfield()
+  }
+})
 
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      isEntered.value = true
-
-      setTimeout(() => initStarfield(), 200)
-
-      const total = extendedList.value.length
-      const centerIdx = currentIndex.value
-
-      // 按距离中心排序
-      const sorted = Array.from({ length: total }, (_, i) => i).sort((a, b) => {
-        let posA = a - centerIdx
-        let posB = b - centerIdx
-        if (posA > total / 2)
-          posA -= total
-        if (posA < -total / 2)
-          posA += total
-        if (posB > total / 2)
-          posB -= total
-        if (posB < -total / 2)
-          posB += total
-        return Math.abs(posA) - Math.abs(posB)
-      })
-
-      sorted.forEach((idx, order) => {
-        setTimeout(() => {
-          cardEntered.value[idx] = true
-        }, 200 + order * 120)
-      })
-
-      setTimeout(startAutoPlay, 200 + total * 120 + 500)
-    })
-  })
-}
-
-watch(carouselList, async (newList) => {
+watch(carouselList, (newList) => {
   if (newList.length > 0) {
     // 重置状态
     imageLoaded.value = {}
-    cardEntered.value = {}
     currentIndex.value = 0
-    isEntered.value = false
-    isPreloading.value = true
 
-    // 先预加载所有图片
-    await preloadImages(newList)
-
-    // 图片加载完成后播放入场动画
-    nextTick(playEnterAnimation)
+    // 初始化星空和自动播放
+    nextTick(() => {
+      initStarfield()
+      startAutoPlay()
+    })
   }
 }, { immediate: true })
 
@@ -466,68 +384,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 骨架屏：数据加载中或图片预加载中 -->
-  <div v-if="carouselList.length === 0 || isPreloading" class="carousel-3d carousel-3d--loading">
+  <!-- 骨架屏：数据加载中 -->
+  <div v-if="loading || carouselList.length === 0" class="carousel-3d carousel-3d--loading">
     <div class="carousel-3d__header">
       <div class="skeleton-badge">
         <span class="skeleton-badge__text">🔥 热门壁纸</span>
       </div>
     </div>
 
-    <!-- 加载提示文字 -->
+    <!-- 简洁的加载提示 -->
     <div class="loading-hint">
-      <div class="loading-hint__icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 6v6l4 2" />
-        </svg>
-      </div>
-      <h3 class="loading-hint__title">
-        拼命加载中，请稍后...
-      </h3>
-      <p class="loading-hint__subtitle">
-        正在为您准备精美壁纸
+      <div class="loading-spinner" />
+      <p class="loading-hint__text">
+        正在加载热门壁纸...
       </p>
-    </div>
-
-    <div class="skeleton-cards">
-      <div class="skeleton-card skeleton-card--side">
-        <div class="skeleton-shimmer" />
-        <div class="skeleton-card__icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-        </div>
-      </div>
-      <div class="skeleton-card skeleton-card--center">
-        <div class="skeleton-shimmer" />
-        <div class="skeleton-card__icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-        </div>
-      </div>
-      <div class="skeleton-card skeleton-card--side">
-        <div class="skeleton-shimmer" />
-        <div class="skeleton-card__icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-        </div>
-      </div>
-    </div>
-    <!-- 加载进度 -->
-    <div v-if="isPreloading && carouselList.length > 0" class="loading-progress">
-      <div class="progress-bar">
-        <div class="progress-fill" :style="{ width: `${preloadProgress}%` }" />
-      </div>
-      <span class="progress-text">加载中 {{ preloadProgress }}%</span>
     </div>
   </div>
 
@@ -536,7 +406,7 @@ onUnmounted(() => {
     v-else
     ref="containerRef"
     class="carousel-3d"
-    :class="{ 'is-entered': isEntered, 'is-hovering': isHovering }"
+    :class="{ 'is-hovering': isHovering }"
     @mouseenter="handleMouseEnter"
     @mouseleave="handleMouseLeave"
     @mousemove="handleMouseMove"
@@ -626,17 +496,6 @@ onUnmounted(() => {
   background: linear-gradient(180deg, #05050a 0%, #0a0a12 50%, #050508 100%);
   min-height: 560px; // 增加高度以适应更大的中间图片
 
-  opacity: 0;
-  transform: translateY(30px);
-  transition:
-    opacity 0.8s ease,
-    transform 0.8s ease;
-
-  &.is-entered {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
   // 悬停时显示导航
   &.is-hovering {
     .carousel-3d__nav {
@@ -723,19 +582,6 @@ onUnmounted(() => {
   font-size: $font-size-sm;
   font-weight: $font-weight-semibold;
   box-shadow: 0 4px 20px rgba(249, 115, 22, 0.5);
-  opacity: 0;
-  transform: translateX(-30px);
-
-  .carousel-3d.is-entered & {
-    animation: badge-in 0.6s 0.3s ease-out forwards;
-  }
-}
-
-@keyframes badge-in {
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }
 
 // 舞台
@@ -993,14 +839,14 @@ onUnmounted(() => {
   }
 }
 
-// 骨架屏 - 适配深色/浅色主题
+// 骨架屏 - 简洁加载样式
 .carousel-3d--loading {
   position: relative;
-  min-height: 560px; // 与主容器高度保持一致
+  min-height: 560px;
   border-radius: $radius-2xl;
-
-  // 深色模式（默认，因为轮播图区域本身是深色的）
   background: linear-gradient(180deg, #0a0a15 0%, #12121f 100%);
+  display: flex;
+  flex-direction: column;
 
   .carousel-3d__header {
     position: absolute;
@@ -1029,199 +875,51 @@ onUnmounted(() => {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    text-align: center;
-    z-index: 10;
-    animation: float-up 2s ease-in-out infinite;
-  }
-
-  .loading-hint__icon {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 80px;
-    height: 80px;
-    margin: 0 auto $spacing-md;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(139, 92, 246, 0.4));
-    border-radius: 50%;
-    border: 2px solid rgba(99, 102, 241, 0.5);
-    animation: spin 3s linear infinite;
-
-    svg {
-      width: 40px;
-      height: 40px;
-      color: #a5b4fc;
-      filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.8));
-    }
-  }
-
-  .loading-hint__title {
-    font-size: $font-size-xl;
-    font-weight: $font-weight-bold;
-    margin-bottom: $spacing-xs;
-    color: #c7d2fe;
-    text-shadow:
-      0 0 20px rgba(165, 180, 252, 0.8),
-      0 0 40px rgba(139, 92, 246, 0.6);
-    animation: pulse-text 2s ease-in-out infinite;
-  }
-
-  .loading-hint__subtitle {
-    font-size: $font-size-sm;
-    color: rgba(255, 255, 255, 0.8);
-    opacity: 1;
-  }
-
-  .skeleton-cards {
-    display: flex;
-    justify-content: center;
+    flex-direction: column;
     align-items: center;
     gap: $spacing-md;
-    height: 400px;
-    padding-top: 60px;
-    position: relative;
-    z-index: 1;
   }
 
-  .skeleton-card {
-    position: relative;
-    background: rgba(255, 255, 255, 0.12);
-    border-radius: $radius-lg;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-
-    .skeleton-shimmer {
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.15) 50%, transparent 100%);
-      animation: shimmer 2s infinite;
-    }
-
-    &--center {
-      width: 400px;
-      aspect-ratio: 16 / 9;
-      background: rgba(255, 255, 255, 0.18);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-
-    &--side {
-      width: 300px;
-      aspect-ratio: 16 / 9;
-      opacity: 0.7;
-    }
+  .loading-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top-color: rgba(99, 102, 241, 0.8);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
   }
 
-  .skeleton-card__icon {
-    z-index: 2;
-    color: rgba(255, 255, 255, 0.5);
-
-    svg {
-      width: 40px;
-      height: 40px;
-      animation: pulse 2s ease-in-out infinite;
-    }
+  .loading-hint__text {
+    font-size: $font-size-sm;
+    color: rgba(255, 255, 255, 0.6);
   }
 }
 
-// 加载进度条
-.loading-progress {
-  position: absolute;
-  bottom: 40px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
-
-.progress-bar {
-  width: 200px;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
-  border-radius: 2px;
-  transition: width 0.3s ease;
-}
-
-.progress-text {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
-}
-
-// 浅色主题下的骨架屏 - 使用 :root 选择器配合 scoped
-// 注意：由于 data-theme 在 html 元素上，需要使用非 scoped 的方式
+// 浅色主题下的骨架屏
 </style>
 
 <style lang="scss">
 // 浅色主题下的骨架屏（非 scoped，用于匹配 html[data-theme='light']）
 [data-theme='light'] {
   .carousel-3d--loading {
-    background: linear-gradient(180deg, #dde3ea 0%, #c8d1dc 100%) !important;
+    background: linear-gradient(180deg, #e8ecf1 0%, #dde3ea 100%) !important;
 
     .skeleton-badge {
-      background: rgba(0, 0, 0, 0.12) !important;
-      border-color: rgba(0, 0, 0, 0.08) !important;
+      background: rgba(0, 0, 0, 0.08) !important;
+      border-color: rgba(0, 0, 0, 0.06) !important;
     }
 
     .skeleton-badge__text {
       color: rgba(0, 0, 0, 0.6) !important;
     }
 
-    .loading-hint__icon {
-      background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.3)) !important;
-      border-color: rgba(99, 102, 241, 0.4) !important;
-
-      svg {
-        color: #4f46e5 !important;
-        filter: drop-shadow(0 0 8px rgba(79, 70, 229, 0.5)) !important;
-      }
-    }
-
-    .loading-hint__title {
-      color: #3730a3 !important;
-      text-shadow:
-        0 0 15px rgba(79, 70, 229, 0.4),
-        0 0 30px rgba(124, 58, 237, 0.3) !important;
-    }
-
-    .loading-hint__subtitle {
-      color: rgba(0, 0, 0, 0.7) !important;
-    }
-
-    .skeleton-card {
-      background: rgba(0, 0, 0, 0.1) !important;
+    .loading-spinner {
       border-color: rgba(0, 0, 0, 0.1) !important;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
-
-      .skeleton-shimmer {
-        background: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.08) 50%, transparent 100%) !important;
-      }
-
-      &--center {
-        background: rgba(0, 0, 0, 0.15) !important;
-        border-color: rgba(0, 0, 0, 0.12) !important;
-      }
+      border-top-color: rgba(99, 102, 241, 0.8) !important;
     }
 
-    .skeleton-card__icon {
-      color: rgba(0, 0, 0, 0.35) !important;
-    }
-
-    .progress-bar {
-      background: rgba(0, 0, 0, 0.15) !important;
-    }
-
-    .progress-text {
+    .loading-hint__text {
       color: rgba(0, 0, 0, 0.5) !important;
     }
   }
@@ -1229,51 +927,12 @@ onUnmounted(() => {
 </style>
 
 <style lang="scss" scoped>
-@keyframes shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-@keyframes float-up {
-  0%,
-  100% {
-    transform: translate(-50%, -50%);
-  }
-  50% {
-    transform: translate(-50%, -55%);
-  }
-}
-
 @keyframes spin {
   0% {
     transform: rotate(0deg);
   }
   100% {
     transform: rotate(360deg);
-  }
-}
-
-@keyframes pulse-text {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
   }
 }
 

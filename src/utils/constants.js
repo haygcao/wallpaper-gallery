@@ -6,7 +6,7 @@
 // - 本地开发：使用此默认值
 // - 线上构建：GitHub Actions 会自动替换为图床最新 tag
 // - jsdelivr 缓存策略：@main 分支有缓存，@tag 版本无缓存
-export const CDN_VERSION = 'v1.1.7'
+export const CDN_VERSION = 'v1.1.9'
 
 // CDN URL 动态构建（防止静态分析提取完整链接）
 const _cdnParts = {
@@ -124,6 +124,8 @@ export const FORMAT_OPTIONS = [
 // 分辨率标签阈值（按长边判断，用于弹窗中根据真实图片尺寸动态生成标签）
 // ========================================
 export const RESOLUTION_THRESHOLDS = [
+  { minWidth: 15360, label: '16K', type: 'danger' },
+  { minWidth: 7680, label: '8K', type: 'danger' },
   { minWidth: 5120, label: '5K+', type: 'danger' },
   { minWidth: 4096, label: '4K+', type: 'warning' },
   { minWidth: 3840, label: '4K', type: 'success' },
