@@ -37,6 +37,9 @@ const { isMobile } = useDevice()
 // 是否支持真机显示（手机壁纸和头像系列）
 const canUseDeviceMode = computed(() => ['mobile', 'avatar'].includes(currentSeries.value))
 
+// 是否为头像系列（正方形图片，需要特殊布局）
+const isAvatarSeries = computed(() => currentSeries.value === 'avatar')
+
 // 真机显示模式（统一用于电脑端和手机端）
 const isDeviceMode = ref(false)
 const showControls = ref(false) // 真机模式下是否显示控制按钮
@@ -470,7 +473,7 @@ onUnmounted(() => {
       style="opacity: 0; visibility: hidden"
       @click.self="handleClose"
     >
-      <div ref="contentRef" class="portrait-modal-content" :class="{ 'is-device-mode-content': isDeviceMode && isMobile && canUseDeviceMode }">
+      <div ref="contentRef" class="portrait-modal-content" :class="{ 'is-device-mode-content': isDeviceMode && isMobile && canUseDeviceMode, 'is-avatar-content': isAvatarSeries }">
         <!-- Close Button -->
         <button
           class="modal-close"
@@ -524,7 +527,7 @@ onUnmounted(() => {
         <!-- Image Container - 竖屏布局 -->
         <div
           class="portrait-image-container"
-          :class="{ 'is-device-mode': isDeviceMode }"
+          :class="{ 'is-device-mode': isDeviceMode, 'is-avatar-container': isAvatarSeries }"
           @click="toggleControls"
         >
           <!-- 真机显示模式：显示手机框架（统一用于电脑端和手机端） -->
@@ -569,6 +572,7 @@ onUnmounted(() => {
               :class="{
                 'portrait-image--device-mode': isDeviceMode,
                 'portrait-image--loaded': imageLoaded && !imageError,
+                'portrait-image--avatar': isAvatarSeries,
               }"
               @load="handleImageLoad"
               @error="handleImageError"
@@ -733,6 +737,17 @@ onUnmounted(() => {
     box-shadow: none;
     background: transparent;
   }
+
+  // 头像系列：自适应高度，不设置固定最小高度
+  &.is-avatar-content {
+    min-height: auto; // 取消最小高度限制
+    max-height: 90vh;
+
+    @include mobile-only {
+      min-height: auto;
+      max-height: 95vh;
+    }
+  }
 }
 
 .modal-close {
@@ -885,9 +900,23 @@ onUnmounted(() => {
     transition: background-color 0.2s ease;
   }
 
+  // 头像系列：自适应高度，正方形图片不需要固定最小高度
+  &.is-avatar-container {
+    min-height: auto; // 取消最小高度限制，让图片自适应
+    flex: 0 0 auto; // 不拉伸，按内容高度显示
+    aspect-ratio: 1 / 1; // 保持正方形比例
+    max-width: 100%;
+    width: 100%; // 宽度撑满
+  }
+
   @include mobile-only {
     min-height: 55vh; // 移动端稍小一些
     // max-height: 65vh;
+
+    // 头像系列移动端也自适应
+    &.is-avatar-container {
+      min-height: auto;
+    }
   }
 }
 
@@ -952,6 +981,14 @@ onUnmounted(() => {
   opacity: 0;
   // 图片加载完成后通过类名触发动画
   transition: opacity 0.3s ease;
+
+  // 头像图片（非真机模式）：正方形自适应
+  &--avatar {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+  }
 
   // 在手机框架中的样式
   &--in-frame {
