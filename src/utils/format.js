@@ -6,8 +6,8 @@ import { CDN_VERSION, RESOLUTION_THRESHOLDS, SERIES_CONFIG } from '@/utils/const
 
 // URL 构建器（运行时动态拼接，防止静态分析提取完整 URL）
 const _urlParts = {
-  p: 'https:/',
-  h: '/cdn.jsdelivr.net',
+  p: 'https://',
+  h: 'cdn.jsdelivr.net',
   g: '/gh/IT-NuanxinPro',
   r: `/nuanXinProPic@${CDN_VERSION}`,
 }
@@ -219,21 +219,62 @@ export async function downloadFile(url, filename, delay = 300) {
     }
 
     const response = await fetch(finalUrl)
-    const blob = await response.blob()
-    const blobUrl = URL.createObjectURL(blob)
 
-    const link = document.createElement('a')
-    link.href = blobUrl
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(blobUrl)
+    // 如果 CDN 返回 403 或 404，回退到 GitHub Raw CDN
+    if (!response.ok || response.status === 403 || response.status === 404) {
+      console.warn('[downloadFile] CDN 失败，回退到 GitHub Raw CDN:', response.status)
+      finalUrl = buildRawImageUrl(finalUrl)
+      const fallbackResponse = await fetch(finalUrl)
+
+      if (!fallbackResponse.ok) {
+        throw new Error(`GitHub Raw CDN 失败: ${fallbackResponse.status}`)
+      }
+
+      const blob = await fallbackResponse.blob()
+      const blobUrl = URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(blobUrl)
+    }
+    else {
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(blobUrl)
+    }
   }
   catch {
     // 降级方案：直接打开链接
     window.open(url, '_blank')
   }
+}
+
+/**
+ * 构建 GitHub Raw CDN URL（无大小限制）
+ * @param {string} cdnUrl - jsDelivr CDN URL
+ * @returns {string} GitHub Raw CDN URL
+ */
+function buildRawImageUrl(cdnUrl) {
+  // 从 jsDelivr URL 提取路径
+  // 示例: https://cdn.jsdelivr.net/gh/IT-NuanxinPro/nuanXinProPic@v1.1.14/wallpaper/...
+  const match = cdnUrl.match(/\/gh\/IT-NuanxinPro\/nuanXinProPic@([^/]+)(\/.*)/)
+  if (match) {
+    const version = match[1]
+    const path = match[2]
+    return `https://raw.githubusercontent.com/IT-NuanxinPro/nuanXinProPic/${version}${path}`
+  }
+  return cdnUrl
 }
 
 // ========================================
