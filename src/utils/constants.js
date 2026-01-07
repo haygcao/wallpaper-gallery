@@ -12,8 +12,8 @@ export const CDN_VERSION = 'v1.1.13'
 // eslint-disable-next-line no-undef
 export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'
 
-// 数据请求版本参数（用于破坏 CDN/浏览器缓存）
-export const DATA_CACHE_BUSTER = APP_VERSION !== '0.0.0' ? `?v=${APP_VERSION}` : ''
+// 数据请求版本参数（使用 CDN_VERSION 破坏缓存，确保图床更新后数据同步刷新）
+export const DATA_CACHE_BUSTER = `?v=${CDN_VERSION}`
 
 // CDN URL 动态构建（防止静态分析提取完整链接）
 const _cdnParts = {
