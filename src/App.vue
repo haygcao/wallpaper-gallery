@@ -1,4 +1,6 @@
 <script setup>
+import { ElConfigProvider } from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import UpdateNotification from '@/components/common/feedback/UpdateNotification.vue'
@@ -28,31 +30,33 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="app">
-    <AppHeader />
+  <ElConfigProvider :locale="zhCn">
+    <div class="app">
+      <AppHeader />
 
-    <main class="main-content">
-      <RouterView v-slot="{ Component }">
-        <Suspense v-if="Component">
-          <template #default>
-            <component :is="Component" />
-          </template>
-          <template #fallback>
-            <div class="home-page">
-              <div class="container">
-                <GridSkeleton :count="12" :aspect-type="skeletonAspectType" />
+      <main class="main-content">
+        <RouterView v-slot="{ Component }">
+          <Suspense v-if="Component">
+            <template #default>
+              <component :is="Component" />
+            </template>
+            <template #fallback>
+              <div class="home-page">
+                <div class="container">
+                  <GridSkeleton :count="12" :aspect-type="skeletonAspectType" />
+                </div>
               </div>
-            </div>
-          </template>
-        </Suspense>
-      </RouterView>
-    </main>
+            </template>
+          </Suspense>
+        </RouterView>
+      </main>
 
-    <!-- <AppFooter /> -->
+      <!-- <AppFooter /> -->
 
-    <!-- 版本更新提示 -->
-    <UpdateNotification />
-  </div>
+      <!-- 版本更新提示 -->
+      <UpdateNotification />
+    </div>
+  </ElConfigProvider>
 </template>
 
 <style lang="scss">

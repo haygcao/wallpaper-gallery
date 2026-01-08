@@ -1,6 +1,3 @@
-// Element Plus 中文语言包
-import ElementPlus from 'element-plus'
-import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'
 import App from './App.vue'
@@ -53,7 +50,6 @@ loadUmamiAnalytics()
 const app = createApp(App)
 const pinia = createPinia()
 
-app.use(ElementPlus, { locale: zhCn })
 app.use(pinia)
 app.use(router)
 app.mount('#app')
