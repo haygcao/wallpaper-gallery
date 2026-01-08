@@ -159,9 +159,16 @@ wallpaper-gallery/
 │   ├── assets/styles/    # 全局样式（Sass）
 │   ├── components/       # Vue 组件
 │   │   ├── common/       # 通用组件
+│   │   │   ├── feedback/     # 反馈提示组件（Loading、通知、横幅等）
+│   │   │   ├── form/         # 表单控件（日期选择器、下拉框、筛选面板等）
+│   │   │   ├── navigation/   # 导航组件（返回顶部、分页、抽屉等）
+│   │   │   └── ui/           # 基础 UI 组件（动画数字、环境徽章等）
 │   │   ├── home/         # 首页组件
 │   │   ├── layout/       # 布局组件
 │   │   └── wallpaper/    # 壁纸相关组件
+│   │       ├── PortraitWallpaperModal/  # 竖屏壁纸弹窗（手机/头像系列）
+│   │       ├── WallpaperGrid/           # 壁纸网格（含骨架屏）
+│   │       └── WallpaperModal/          # 横屏壁纸弹窗（电脑/Bing系列）
 │   ├── composables/      # 组合式函数
 │   ├── router/           # Vue Router 路由配置
 │   ├── views/            # 页面视图组件
@@ -198,6 +205,19 @@ wallpaper-gallery/
 - **结构化数据** - Schema.org 标记，增强搜索引擎理解
 - **Sitemap** - 自动生成站点地图
 - **搜索引擎提交** - 支持百度主动推送、Google Search Console
+
+## ☕ 赞赏支持
+
+如果这个项目对你有帮助，欢迎请作者喝杯咖啡 ☕
+
+本项目完全开源免费，所有壁纸资源均可自由使用。维护开源项目需要投入大量时间和精力，你的支持是我持续更新的动力！
+
+<p align="center">
+  <img src="docs/sponsor-alipay.png" width="300" alt="支付宝" />
+  <img src="docs/sponsor-wechat.png" width="300" alt="微信支付" />
+</p>
+
+感谢每一位支持者 ❤️
 
 ## 📄 License
 

@@ -3,10 +3,14 @@ import { gsap } from 'gsap'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDevice } from '@/composables/useDevice'
 
-defineProps({
+const props = defineProps({
   isDark: {
     type: Boolean,
     default: false,
+  },
+  showSizeSelector: {
+    type: Boolean,
+    default: true,
   },
 })
 
@@ -147,6 +151,35 @@ async function toggleExpand(newExpanded) {
     }
   }
 }
+
+// 监听 showSizeSelector 变化，重新初始化状态
+watch(() => props.showSizeSelector, (newValue) => {
+  if (newValue && !isDesktop.value) {
+    // 重置为收缩状态
+    isExpanded.value = false
+    nextTick(() => {
+      if (optionsRef.value) {
+        gsap.set(optionsRef.value, {
+          display: 'none',
+          height: 0,
+          width: 0,
+          opacity: 0,
+          scale: 0.8,
+        })
+      }
+      if (selectorRef.value) {
+        const floatingBall = selectorRef.value.querySelector('.size-selector__floating-ball')
+        if (floatingBall) {
+          gsap.set(floatingBall, {
+            display: 'flex',
+            scale: 1,
+            opacity: 1,
+          })
+        }
+      }
+    })
+  }
+})
 
 // 监听设备类型变化，更新展开状态
 watch(isDesktop, (newIsDesktop) => {
@@ -347,7 +380,7 @@ onUnmounted(() => {
 <template>
   <div class="phone-frame" :class="{ 'phone-frame--dark': isDark }">
     <!-- 移动端：悬浮球形式，使用 Teleport 移到 body 避免受祖先元素 transform 影响 -->
-    <Teleport v-if="!isDesktop" to="body">
+    <Teleport v-if="!isDesktop && props.showSizeSelector" to="body">
       <div
         ref="selectorRef"
         class="phone-frame__size-selector phone-frame__size-selector--floating"

@@ -1,9 +1,9 @@
 <script setup>
 import { computed, ref } from 'vue'
-import AnimatedNumber from '@/components/common/AnimatedNumber.vue'
-import BingDatePicker from '@/components/common/BingDatePicker.vue'
-import CategoryDropdown from '@/components/common/CategoryDropdown.vue'
-import MobileCategoryDrawer from '@/components/common/MobileCategoryDrawer.vue'
+import BingDatePicker from '@/components/common/form/BingDatePicker.vue'
+import CategoryDropdown from '@/components/common/form/CategoryDropdown.vue'
+import MobileCategoryDrawer from '@/components/common/navigation/MobileCategoryDrawer.vue'
+import AnimatedNumber from '@/components/common/ui/AnimatedNumber.vue'
 import { useDevice } from '@/composables/useDevice'
 import { useViewMode } from '@/composables/useViewMode'
 import { trackFilter } from '@/utils/analytics'

@@ -7,7 +7,7 @@
 import Cropper from 'cropperjs'
 import { gsap } from 'gsap'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import LoadingSpinner from '@/components/common/feedback/LoadingSpinner.vue'
 import { trackImageCrop } from '@/utils/analytics'
 import { buildRawImageUrl } from '@/utils/format'
 import 'cropperjs/dist/cropper.css'
