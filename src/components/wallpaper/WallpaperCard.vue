@@ -289,6 +289,7 @@ function handleMouseLeave(e) {
         width="800"
         height="600"
         loading="lazy"
+        :fetchpriority="index < 6 ? 'high' : 'auto'"
         :class="{ 'is-loaded': imageLoaded, 'is-error': imageError }"
         @load="handleImageLoad"
         @error="handleImageError"

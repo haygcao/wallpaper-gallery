@@ -1,12 +1,13 @@
 <script setup>
 import { computed, ref } from 'vue'
-import BingDatePicker from '@/components/common/BingDatePicker.vue'
-import CategoryDropdown from '@/components/common/CategoryDropdown.vue'
-import MobileCategoryDrawer from '@/components/common/MobileCategoryDrawer.vue'
+import BingDatePicker from '@/components/common/form/BingDatePicker.vue'
+import CategoryDropdown from '@/components/common/form/CategoryDropdown.vue'
+import MobileCategoryDrawer from '@/components/common/navigation/MobileCategoryDrawer.vue'
+import AnimatedNumber from '@/components/common/ui/AnimatedNumber.vue'
 import { useDevice } from '@/composables/useDevice'
 import { useViewMode } from '@/composables/useViewMode'
 import { trackFilter } from '@/utils/analytics'
-import { FORMAT_OPTIONS, SORT_OPTIONS } from '@/utils/constants'
+import { FORMAT_OPTIONS, RESOLUTION_OPTIONS, SORT_OPTIONS } from '@/utils/constants'
 
 const props = defineProps({
   sortBy: {
@@ -14,6 +15,10 @@ const props = defineProps({
     default: 'newest',
   },
   formatFilter: {
+    type: String,
+    default: 'all',
+  },
+  resolutionFilter: {
     type: String,
     default: 'all',
   },
@@ -58,9 +63,9 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['update:sortBy', 'update:formatFilter', 'update:categoryFilter', 'update:subcategoryFilter', 'reset'])
+const emit = defineEmits(['update:sortBy', 'update:formatFilter', 'update:resolutionFilter', 'update:categoryFilter', 'update:subcategoryFilter', 'reset'])
 
-const { isMobile } = useDevice()
+const { isMobileOrTablet } = useDevice()
 const { viewMode, setViewMode } = useViewMode()
 
 // 移动端弹窗状态
@@ -73,7 +78,7 @@ const tempFormatFilter = ref(props.formatFilter)
 
 // 是否有激活的筛选条件
 const hasActiveFilters = computed(() => {
-  return props.formatFilter !== 'all' || props.categoryFilter !== 'all' || props.subcategoryFilter !== 'all' || props.sortBy !== 'newest'
+  return props.formatFilter !== 'all' || props.resolutionFilter !== 'all' || props.categoryFilter !== 'all' || props.subcategoryFilter !== 'all' || props.sortBy !== 'newest'
 })
 
 // 视图模式滑动指示器位置
@@ -88,9 +93,9 @@ const viewModeSliderPosition = computed(() => {
   }
 })
 
-// 移动端视图模式滑动指示器位置（只有瀑布流和列表两个选项）
+// 移动端视图模式滑动指示器位置（网格和列表两个选项）
 const mobileViewModeSliderPosition = computed(() => {
-  return viewMode.value === 'list' ? 'is-list' : 'is-masonry'
+  return viewMode.value === 'list' ? 'is-list' : 'is-grid'
 })
 
 // 激活的筛选数量（不含分类，分类单独显示）
@@ -130,6 +135,11 @@ function handleFormatChange(value) {
   trackFilter('format', value)
 }
 
+function handleResolutionChange(value) {
+  emit('update:resolutionFilter', value)
+  trackFilter('resolution', value)
+}
+
 // 移动端分类变化处理（来自 MobileCategoryDrawer，不重置子分类，由抽屉组件自行处理）
 function handleCategoryChange(value) {
   emit('update:categoryFilter', value)
@@ -159,6 +169,7 @@ function handleSubcategoryUpdate(value) {
 function handleReset() {
   emit('update:sortBy', 'newest')
   emit('update:formatFilter', 'all')
+  emit('update:resolutionFilter', 'all')
   emit('update:categoryFilter', 'all')
   emit('update:subcategoryFilter', 'all')
   emit('reset')
@@ -216,9 +227,9 @@ function resetFilters() {
           加载中...
         </template>
         <template v-else>
-          共 <strong class="count-value">{{ resultCount }}</strong> 张壁纸
+          共 <AnimatedNumber :value="resultCount" class="count-value" /> 张壁纸
           <span v-if="resultCount !== totalCount" class="filtered-hint">
-            (筛选自 {{ totalCount }} 张)
+            (筛选自 <AnimatedNumber :value="totalCount" :duration="0.4" /> 张)
           </span>
         </template>
       </span>
@@ -226,7 +237,7 @@ function resetFilters() {
       <!-- PC 端重置按钮 -->
       <Transition name="fade">
         <button
-          v-if="hasActiveFilters && !isMobile"
+          v-if="hasActiveFilters && !isMobileOrTablet"
           class="reset-btn"
           @click="handleReset"
         >
@@ -240,7 +251,7 @@ function resetFilters() {
     </div>
 
     <!-- PC 端筛选项 -->
-    <div v-if="!isMobile" class="filter-right">
+    <div v-if="!isMobileOrTablet" class="filter-right">
       <!-- View Mode Toggle -->
       <div class="view-mode-toggle">
         <!-- 滑动指示器 -->
@@ -325,6 +336,25 @@ function resetFilters() {
         </el-select>
       </div>
 
+      <!-- Resolution Filter (仅电脑壁纸系列显示) -->
+      <div v-if="currentSeries === 'desktop'" class="filter-item">
+        <span class="filter-label">分辨率</span>
+        <el-select
+          :model-value="resolutionFilter"
+          placeholder="全部分辨率"
+          size="default"
+          style="width: 140px"
+          @change="handleResolutionChange"
+        >
+          <el-option
+            v-for="option in RESOLUTION_OPTIONS"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+      </div>
+
       <!-- Sort -->
       <div class="filter-item">
         <span class="filter-label">排序</span>
@@ -347,20 +377,21 @@ function resetFilters() {
 
     <!-- 移动端视图切换 + 分类按钮 + 筛选按钮 -->
     <div v-else class="filter-right-mobile">
-      <!-- 视图模式切换 -->
+      <!-- 视图模式切换（网格/列表） -->
       <div class="view-mode-toggle-mobile">
         <div class="view-mode-slider-mobile" :class="mobileViewModeSliderPosition" />
         <button
           class="view-mode-btn-mobile"
-          :class="{ 'is-active': viewMode === 'masonry' || viewMode === 'grid' }"
-          aria-label="瀑布流视图"
-          @click="setViewMode('masonry')"
+          :class="{ 'is-active': viewMode === 'grid' || viewMode === 'masonry' }"
+          aria-label="网格视图"
+          @click="setViewMode('grid')"
         >
+          <!-- 网格图标 -->
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="7" height="10" />
-            <rect x="14" y="3" width="7" height="6" />
-            <rect x="3" y="16" width="7" height="5" />
-            <rect x="14" y="12" width="7" height="9" />
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
           </svg>
         </button>
         <button
@@ -742,8 +773,8 @@ function resetFilters() {
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 0;
 
-  // 移动端只有两个位置：瀑布流（默认）和列表
-  &.is-masonry {
+  // 移动端只有两个位置：网格（默认）和列表
+  &.is-grid {
     transform: translateX(0);
   }
 

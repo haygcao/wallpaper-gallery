@@ -2,14 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DiyAvatarBanner from '@/components/avatar/DiyAvatarBanner.vue'
-import AnnouncementBanner from '@/components/common/AnnouncementBanner.vue'
-import BackToTop from '@/components/common/BackToTop.vue'
-import FilterPanel from '@/components/common/FilterPanel.vue'
+import AnnouncementBanner from '@/components/common/feedback/AnnouncementBanner.vue'
+import FilterPanel from '@/components/common/form/FilterPanel.vue'
+import BackToTop from '@/components/common/navigation/BackToTop.vue'
 import PopularWallpapers3D from '@/components/home/PopularWallpapers3D.vue'
 // 2D 版本备用：import PopularWallpapers from '@/components/home/PopularWallpapers.vue'
-import PortraitWallpaperModal from '@/components/wallpaper/PortraitWallpaperModal.vue'
-import WallpaperGrid from '@/components/wallpaper/WallpaperGrid.vue'
-import WallpaperModal from '@/components/wallpaper/WallpaperModal.vue'
+import PortraitWallpaperModal from '@/components/wallpaper/PortraitWallpaperModal/index.vue'
+import WallpaperGrid from '@/components/wallpaper/WallpaperGrid/index.vue'
+import WallpaperModal from '@/components/wallpaper/WallpaperModal/index.vue'
 
 import { isMobileDevice } from '@/composables/useDevice'
 // Composables
@@ -122,6 +122,12 @@ async function loadSeriesData(series) {
   isLoading.value = true
 
   try {
+    // 重置分类筛选（不同系列的分类不同）
+    filterStore.categoryFilter = 'all'
+    filterStore.subcategoryFilter = 'all'
+    filterStore.resolutionFilter = 'all'
+    filterStore.clearCategoryCache()
+
     // 设置默认排序方式
     filterStore.setDefaultSortBySeries(series)
 
@@ -236,6 +242,7 @@ onMounted(async () => {
       <FilterPanel
         v-model:sort-by="filterStore.sortBy"
         v-model:format-filter="filterStore.formatFilter"
+        v-model:resolution-filter="filterStore.resolutionFilter"
         v-model:category-filter="filterStore.categoryFilter"
         v-model:subcategory-filter="filterStore.subcategoryFilter"
         :category-options="categoryOptions"

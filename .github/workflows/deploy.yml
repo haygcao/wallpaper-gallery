@@ -5,13 +5,14 @@ on:
   push:
     branches: [main]
 
-  # 定时触发：每天 UTC 0:00（北京时间 8:00）自动同步壁纸数据
+  # 定时触发：每天 UTC 18:00（北京时间次日 02:00）- 低峰期,图床同步后 2 小时部署
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 18 * * *'
 
   # 手动触发
   workflow_dispatch:
 
+# 设置 GITHUB_TOKEN 权限
 # 设置 GITHUB_TOKEN 权限
 permissions:
   contents: read
@@ -64,8 +65,9 @@ jobs:
         with:
           repository: IT-NuanxinPro/nuanXinProPic
           path: nuanXinProPic
-          fetch-depth: 0  # 获取完整历史，用于恢复时间戳
+          fetch-depth: 1  # 只需最新版本，时间戳从备份文件恢复
 
+ 
       - name: Restore file timestamps from backup
         run: |
           cd nuanXinProPic
@@ -115,8 +117,7 @@ jobs:
       - name: Install ImageMagick (for image dimensions)
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
-      - name: Generate wallpaper data
-        run: node scripts/generate-data.js
+      # generate-data.js 已包含在 pnpm build 中，无需单独执行
 
       - name: Build
         run: pnpm build
@@ -141,3 +142,22 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Purge Cloudflare cache
+        if: success()
+        run: |
+          echo "🧹 Purging Cloudflare cache..."
+
+          # 清除关键文件缓存（index.html 和 version.json）
+          RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"files":["https://wallpaper.061129.xyz/","https://wallpaper.061129.xyz/index.html","https://wallpaper.061129.xyz/version.json"]}')
+
+          # 检查响应
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "✅ Successfully purged version.json cache"
+          else
+            echo "⚠️ Cache purge response: $RESPONSE"
+          fi

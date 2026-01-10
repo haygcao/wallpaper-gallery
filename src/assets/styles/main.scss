@@ -572,14 +572,30 @@ body.fullscreen-mode {
 // ========================================
 // 真机显示模式（手机端全屏显示壁纸）
 // ========================================
+
+// 默认状态：添加过渡动画，退出真机模式时平滑恢复
+.portrait-modal-overlay {
+  transition: background 0.3s ease;
+}
+
+.portrait-modal-content {
+  transition:
+    background 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
 body.device-mode {
   overflow: hidden !important;
 
+  // 使用 visibility + opacity 替代 display: none
+  // 保持布局占位，避免退出真机模式时卡片大小突变
   .app-header,
   .app-footer,
   .filter-panel,
   .wallpaper-grid-wrapper {
-    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
   }
 
   .portrait-modal-overlay {

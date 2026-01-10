@@ -1,14 +1,14 @@
 <script setup>
 import { gsap } from 'gsap'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import BingWallpaperInfo from '@/components/wallpaper/BingWallpaperInfo.vue'
-import ImageCropModal from '@/components/wallpaper/ImageCropModal.vue'
+import LoadingSpinner from '@/components/common/feedback/LoadingSpinner.vue'
 import { useDevice } from '@/composables/useDevice'
 import { useWallpaperType } from '@/composables/useWallpaperType'
 import { trackWallpaperDownload, trackWallpaperPreview } from '@/utils/analytics'
 import { downloadFile, formatDate, formatFileSize, formatRelativeTime, getDisplayFilename, getFileExtension, getResolutionLabel } from '@/utils/format'
 import { getWallpaperDownloadCount, getWallpaperViewCount, isSupabaseConfigured, recordDownload, recordView } from '@/utils/supabase'
+import ImageCropModal from '../ImageCropModal.vue'
+import BingWallpaperInfo from './BingWallpaperInfo.vue'
 
 const props = defineProps({
   wallpaper: {

@@ -31,14 +31,17 @@ const mousePos = ref({ x: 0, y: 0 })
 // 定时器
 let autoPlayTimer = null
 let particleAnimationId = null
+const pendingTimers = new Set() // 追踪所有待清理的定时器
 
 // 星空粒子
 let stars = []
 let shootingStars = []
+let starfieldResizeHandler = null
 
 // 配置
 const CONFIG = {
   visibleCount: 7,
+  minRequiredCount: 5, // 最少需要 5 张才渲染，避免数据不完整时的重复问题
   centerWidth: 900, // 增大中间图片宽度: 800 -> 900
   spacingFactor: 0.50, // 调整间距因子
   scaleDecay: 0.06, // 减小缩放衰减,让中间图更突出: 0.08 -> 0.06
@@ -46,6 +49,9 @@ const CONFIG = {
   rotateY: 35,
   opacityDecay: 0.15,
 }
+
+// 数据就绪状态（防止数据不完整时渲染）
+const isDataReady = ref(false)
 
 // 轮播数据
 const carouselList = computed(() => {
@@ -60,16 +66,12 @@ const carouselList = computed(() => {
   return []
 })
 
+// 直接使用 carouselList，不再复制数据避免重复
 const extendedList = computed(() => {
   const list = carouselList.value
-  if (list.length === 0)
+  // 数据不足时返回空数组，避免显示重复图片
+  if (list.length < CONFIG.minRequiredCount) {
     return []
-  if (list.length < CONFIG.visibleCount) {
-    const repeated = []
-    while (repeated.length < CONFIG.visibleCount * 2) {
-      repeated.push(...list)
-    }
-    return repeated.slice(0, CONFIG.visibleCount * 2)
   }
   return list
 })
@@ -150,9 +152,11 @@ function goToSlide(index) {
     return
 
   isAnimating.value = true
-  setTimeout(() => {
+  const timer = setTimeout(() => {
     isAnimating.value = false
+    pendingTimers.delete(timer)
   }, 400)
+  pendingTimers.add(timer)
   currentIndex.value = ((index % total) + total) % total
 }
 
@@ -253,7 +257,8 @@ function initStarfield() {
     canvas.height = container.offsetHeight
   }
   resize()
-  window.addEventListener('resize', resize)
+  starfieldResizeHandler = resize
+  window.addEventListener('resize', starfieldResizeHandler)
 
   // 创建星星
   stars = Array.from({ length: 150 }, () => ({
@@ -351,6 +356,10 @@ function destroyStarfield() {
     cancelAnimationFrame(particleAnimationId)
     particleAnimationId = null
   }
+  if (starfieldResizeHandler) {
+    window.removeEventListener('resize', starfieldResizeHandler)
+    starfieldResizeHandler = null
+  }
 }
 
 // 监听 series 变化，立即清空状态（避免显示旧图片）
@@ -360,51 +369,70 @@ watch(() => props.series, (newSeries, oldSeries) => {
     imageLoaded.value = {}
     currentIndex.value = 0
     isEntranceReady.value = false
+    isDataReady.value = false
     stopAutoPlay()
     destroyStarfield()
   }
 })
 
 watch(carouselList, (newList) => {
-  if (newList.length > 0) {
-    // 重置状态
-    imageLoaded.value = {}
-    currentIndex.value = 0
+  // 数据不足时，重置状态并等待
+  if (newList.length < CONFIG.minRequiredCount) {
+    isDataReady.value = false
     isEntranceReady.value = false
-
-    // 初始化星空和自动播放
-    nextTick(() => {
-      initStarfield()
-      // 延迟触发入场动画，让卡片从中心展开
-      setTimeout(() => {
-        isEntranceReady.value = true
-        // 入场动画完成后再启动自动播放
-        setTimeout(() => {
-          startAutoPlay()
-        }, 600)
-      }, 100)
-    })
+    stopAutoPlay()
+    return
   }
+
+  // 数据充足，初始化组件
+  imageLoaded.value = {}
+  currentIndex.value = 0
+  isEntranceReady.value = false
+  isDataReady.value = true
+
+  // 初始化星空和自动播放
+  nextTick(() => {
+    initStarfield()
+    // 延迟触发入场动画，让卡片从中心展开
+    const entranceTimer = setTimeout(() => {
+      isEntranceReady.value = true
+      pendingTimers.delete(entranceTimer)
+      // 入场动画完成后再启动自动播放
+      const autoPlayDelayTimer = setTimeout(() => {
+        startAutoPlay()
+        pendingTimers.delete(autoPlayDelayTimer)
+      }, 600)
+      pendingTimers.add(autoPlayDelayTimer)
+    }, 100)
+    pendingTimers.add(entranceTimer)
+  })
 }, { immediate: true })
 
+// 键盘导航处理函数
+function handleKeydown(e) {
+  if (e.key === 'ArrowLeft')
+    prevSlide()
+  else if (e.key === 'ArrowRight')
+    nextSlide()
+}
+
 onMounted(() => {
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft')
-      prevSlide()
-    else if (e.key === 'ArrowRight')
-      nextSlide()
-  })
+  window.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
   stopAutoPlay()
   destroyStarfield()
+  // 清理所有待处理的定时器
+  pendingTimers.forEach(timer => clearTimeout(timer))
+  pendingTimers.clear()
 })
 </script>
 
 <template>
-  <!-- 骨架屏：数据加载中 -->
-  <div v-if="loading || carouselList.length === 0" class="carousel-3d carousel-3d--loading">
+  <!-- 骨架屏：数据加载中或数据不足 -->
+  <div v-if="loading || !isDataReady" class="carousel-3d carousel-3d--loading">
     <div class="carousel-3d__header">
       <div class="skeleton-badge">
         <span class="skeleton-badge__text">🔥 热门壁纸</span>
@@ -461,7 +489,7 @@ onUnmounted(() => {
       <div class="carousel-3d__track">
         <div
           v-for="(wallpaper, index) in extendedList"
-          :key="`${wallpaper.id}-${index}`"
+          :key="wallpaper.id"
           class="carousel-3d__card"
           :class="{ 'is-active': isActiveCard(index), 'is-animating': isAnimating }"
           :style="getCardStyle(index)"

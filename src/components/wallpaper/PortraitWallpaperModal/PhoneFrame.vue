@@ -3,48 +3,52 @@ import { gsap } from 'gsap'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDevice } from '@/composables/useDevice'
 
-defineProps({
+const props = defineProps({
   isDark: {
     type: Boolean,
     default: false,
+  },
+  showSizeSelector: {
+    type: Boolean,
+    default: true,
   },
 })
 
 // 设备尺寸类型
 const DEVICE_SIZES = {
-  STANDARD: 'standard', // 标准版：375 × 812
-  PRO: 'pro', // Pro：393 × 852
-  PRO_MAX: 'proMax', // Pro Max：430 × 932
+  SIZE_SMALL: 'size_small', // 小屏 (5.5-5.9")：375 × 812
+  SIZE_MEDIUM: 'size_medium', // 中屏 (6.0-6.3")：390 × 844
+  SIZE_LARGE: 'size_large', // 大屏 (6.4-6.6")：410 × 885
+  SIZE_XLARGE: 'size_xlarge', // 超大屏 (6.7"+)：430 × 932
 }
 
 // 设备尺寸配置
 const deviceSizeConfig = {
-  [DEVICE_SIZES.STANDARD]: {
+  [DEVICE_SIZES.SIZE_SMALL]: {
     width: 375,
     height: 812,
-    label: '标准版',
-    mobileWidth: 320,
-    mobileHeight: 693,
+    label: '小屏 (5.5-5.9")',
   },
-  [DEVICE_SIZES.PRO]: {
-    width: 393,
-    height: 852,
-    label: 'Pro',
-    mobileWidth: 340,
-    mobileHeight: 735,
+  [DEVICE_SIZES.SIZE_MEDIUM]: {
+    width: 390,
+    height: 844,
+    label: '中屏 (6.0-6.3")',
   },
-  [DEVICE_SIZES.PRO_MAX]: {
+  [DEVICE_SIZES.SIZE_LARGE]: {
+    width: 410,
+    height: 885,
+    label: '大屏 (6.4-6.6")',
+  },
+  [DEVICE_SIZES.SIZE_XLARGE]: {
     width: 430,
     height: 932,
-    label: 'Pro Max',
-    mobileWidth: 360,
-    mobileHeight: 780,
+    label: '超大屏 (6.7"+)',
   },
 }
 
-// 从 localStorage 读取保存的设备尺寸，默认使用标准版
+// 从 localStorage 读取保存的设备尺寸，默认使用中屏
 const STORAGE_KEY = 'phone-frame-device-size'
-const deviceSize = ref(localStorage.getItem(STORAGE_KEY) || DEVICE_SIZES.STANDARD)
+const deviceSize = ref(localStorage.getItem(STORAGE_KEY) || DEVICE_SIZES.SIZE_MEDIUM)
 
 // 设备检测
 const { isMobile, isDesktop } = useDevice()
@@ -106,14 +110,13 @@ async function toggleExpand(newExpanded) {
     })
     expandAnimation = tl
 
-    // 悬浮球缩小并淡出
+    // 悬浮球缩小但保持显示（不消失）
     const floatingBall = selectorRef.value?.querySelector('.size-selector__floating-ball')
     if (floatingBall) {
       gsap.to(floatingBall, {
-        scale: 0,
-        opacity: 0,
-        duration: 0.2,
-        ease: 'power2.in',
+        scale: 0.7, // 缩小但不完全消失
+        duration: 0.3,
+        ease: 'power2.out',
       })
     }
   }
@@ -137,20 +140,46 @@ async function toggleExpand(newExpanded) {
     })
     expandAnimation = tl
 
-    // 悬浮球恢复显示（无弹性效果）
+    // 悬浮球恢复正常大小（无延迟，立即恢复）
     const floatingBall = selectorRef.value?.querySelector('.size-selector__floating-ball')
     if (floatingBall) {
-      gsap.set(floatingBall, { display: 'flex', scale: 0, opacity: 0 })
       gsap.to(floatingBall, {
         scale: 1,
-        opacity: 1,
         duration: 0.3,
         ease: 'power2.out',
-        delay: 0.15,
       })
     }
   }
 }
+
+// 监听 showSizeSelector 变化，重新初始化状态
+watch(() => props.showSizeSelector, (newValue) => {
+  if (newValue && !isDesktop.value) {
+    // 重置为收缩状态
+    isExpanded.value = false
+    nextTick(() => {
+      if (optionsRef.value) {
+        gsap.set(optionsRef.value, {
+          display: 'none',
+          height: 0,
+          width: 0,
+          opacity: 0,
+          scale: 0.8,
+        })
+      }
+      if (selectorRef.value) {
+        const floatingBall = selectorRef.value.querySelector('.size-selector__floating-ball')
+        if (floatingBall) {
+          gsap.set(floatingBall, {
+            display: 'flex',
+            scale: 1,
+            opacity: 1,
+          })
+        }
+      }
+    })
+  }
+})
 
 // 监听设备类型变化，更新展开状态
 watch(isDesktop, (newIsDesktop) => {
@@ -181,25 +210,88 @@ function handleClickOutside(e) {
   }
 }
 
+// 计算可用的视口高度（考虑弹窗的顶部和底部预留空间）
+const availableViewportHeight = computed(() => {
+  if (!isMobile.value) {
+    return 0
+  }
+
+  // 移动端真机模式下：
+  // - 顶部预留：40px（"点击退出真机显示"提示）
+  // - 底部预留：100px（信息栏）
+  // - 总预留：140px
+  const reservedHeight = 140
+  const viewportHeight = window.innerHeight
+
+  // 最大可用高度为视口高度的 90%
+  return Math.min(viewportHeight - reservedHeight, viewportHeight * 0.9)
+})
+
+// 计算真机框架的最大显示高度（基于视口高度）
+const maxDisplayHeight = computed(() => {
+  if (!isMobile.value) {
+    return 0
+  }
+
+  // 根据用户选择的真机尺寸，计算合适的显示高度
+  const config = deviceSizeConfig[deviceSize.value]
+  if (!config) {
+    return availableViewportHeight.value
+  }
+
+  // 基础高度：可用视口高度的 85%（确保有足够空间）
+  const baseHeight = availableViewportHeight.value * 0.85
+
+  // 为不同尺寸设置不同的缩放系数，确保有明显差异
+  // 小屏：95%，中屏：100%，大屏：105%，超大屏：110%
+  const sizeScales = {
+    [DEVICE_SIZES.SIZE_SMALL]: 0.95,
+    [DEVICE_SIZES.SIZE_MEDIUM]: 1.0,
+    [DEVICE_SIZES.SIZE_LARGE]: 1.05,
+    [DEVICE_SIZES.SIZE_XLARGE]: 1.1,
+  }
+
+  const scaleFactor = sizeScales[deviceSize.value] || 1.0
+  const displayHeight = Math.floor(baseHeight * scaleFactor)
+
+  // 确保不超过可用视口高度的 95%
+  return Math.min(displayHeight, availableViewportHeight.value * 0.95)
+})
+
 // 当前设备尺寸配置（根据屏幕大小选择 PC 端或移动端尺寸）
 const currentSizeConfig = computed(() => {
-  const config = deviceSizeConfig[deviceSize.value] || deviceSizeConfig[DEVICE_SIZES.STANDARD]
-  if (isMobile.value) {
-    return {
-      ...config,
-      width: config.mobileWidth,
-      height: config.mobileHeight,
-    }
+  const config = deviceSizeConfig[deviceSize.value] || deviceSizeConfig[DEVICE_SIZES.SIZE_MEDIUM]
+
+  // PC端：直接使用配置的尺寸
+  if (!isMobile.value) {
+    return config
   }
-  return config
+
+  // 移动端：根据可用视口高度，动态计算显示尺寸
+  const displayHeight = maxDisplayHeight.value
+  const aspectRatio = config.width / config.height
+  const displayWidth = Math.floor(displayHeight * aspectRatio)
+
+  return {
+    width: displayWidth,
+    height: displayHeight,
+    label: config.label,
+  }
 })
 
 // 处理尺寸切换
 function handleSizeChange(size) {
   deviceSize.value = size
   localStorage.setItem(STORAGE_KEY, size)
-  // 切换后自动收缩
+  // 立即收缩，没有延迟（更丝滑）
   isExpanded.value = false
+}
+
+// LocalStorage 兼容性：旧键值迁移到新键值
+const KEY_MIGRATION = {
+  standard: DEVICE_SIZES.SIZE_MEDIUM,
+  pro: DEVICE_SIZES.SIZE_LARGE,
+  proMax: DEVICE_SIZES.SIZE_XLARGE,
 }
 
 const currentTime = ref('00:14')
@@ -216,6 +308,13 @@ let timeInterval = null
 onMounted(() => {
   updateTime()
   timeInterval = setInterval(updateTime, 1000)
+
+  // LocalStorage 兼容性：初始化时检查并迁移旧键值
+  const storedSize = localStorage.getItem(STORAGE_KEY)
+  if (storedSize && KEY_MIGRATION[storedSize]) {
+    localStorage.setItem(STORAGE_KEY, KEY_MIGRATION[storedSize])
+    deviceSize.value = KEY_MIGRATION[storedSize]
+  }
 
   // 根据设备类型初始化展开状态
   isExpanded.value = isDesktop.value
@@ -280,66 +379,8 @@ onUnmounted(() => {
 
 <template>
   <div class="phone-frame" :class="{ 'phone-frame--dark': isDark }">
-    <!-- PC端：下拉框样式 -->
-    <div
-      v-if="isDesktop"
-      class="phone-frame__size-selector phone-frame__size-selector--dropdown"
-      :class="{ 'is-expanded': isExpanded }"
-      @click.stop
-    >
-      <!-- 触发按钮（当前选中项） -->
-      <button
-        class="size-selector__trigger"
-        @click.stop="isExpanded = !isExpanded"
-      >
-        <span class="trigger__label">{{ currentSizeConfig.label }}</span>
-        <span class="trigger__dimensions">{{ currentSizeConfig.width }}×{{ currentSizeConfig.height }}</span>
-        <svg
-          class="trigger__icon"
-          :class="{ 'is-expanded': isExpanded }"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <path d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
-
-      <!-- 选项列表（可展开/收缩） -->
-      <div
-        ref="optionsRef"
-        class="size-selector__options"
-      >
-        <button
-          class="size-option"
-          :class="{ 'is-active': deviceSize === DEVICE_SIZES.STANDARD }"
-          @click.stop="handleSizeChange(DEVICE_SIZES.STANDARD)"
-        >
-          <span class="size-option__label">标准版</span>
-          <span class="size-option__dimensions">375×812</span>
-        </button>
-        <button
-          class="size-option"
-          :class="{ 'is-active': deviceSize === DEVICE_SIZES.PRO }"
-          @click.stop="handleSizeChange(DEVICE_SIZES.PRO)"
-        >
-          <span class="size-option__label">Pro</span>
-          <span class="size-option__dimensions">393×852</span>
-        </button>
-        <button
-          class="size-option"
-          :class="{ 'is-active': deviceSize === DEVICE_SIZES.PRO_MAX }"
-          @click.stop="handleSizeChange(DEVICE_SIZES.PRO_MAX)"
-        >
-          <span class="size-option__label">Pro Max</span>
-          <span class="size-option__dimensions">430×932</span>
-        </button>
-      </div>
-    </div>
-
     <!-- 移动端：悬浮球形式，使用 Teleport 移到 body 避免受祖先元素 transform 影响 -->
-    <Teleport v-if="!isDesktop" to="body">
+    <Teleport v-if="!isDesktop && props.showSizeSelector" to="body">
       <div
         ref="selectorRef"
         class="phone-frame__size-selector phone-frame__size-selector--floating"
@@ -374,26 +415,34 @@ onUnmounted(() => {
           </div>
           <button
             class="size-option"
-            :class="{ 'is-active': deviceSize === DEVICE_SIZES.STANDARD }"
-            @click.stop="handleSizeChange(DEVICE_SIZES.STANDARD)"
+            :class="{ 'is-active': deviceSize === DEVICE_SIZES.SIZE_SMALL }"
+            @click.stop="handleSizeChange(DEVICE_SIZES.SIZE_SMALL)"
           >
-            <span class="size-option__label">标准版</span>
+            <span class="size-option__label">小屏 (5.5-5.9")</span>
             <span class="size-option__dimensions">375×812</span>
           </button>
           <button
             class="size-option"
-            :class="{ 'is-active': deviceSize === DEVICE_SIZES.PRO }"
-            @click.stop="handleSizeChange(DEVICE_SIZES.PRO)"
+            :class="{ 'is-active': deviceSize === DEVICE_SIZES.SIZE_MEDIUM }"
+            @click.stop="handleSizeChange(DEVICE_SIZES.SIZE_MEDIUM)"
           >
-            <span class="size-option__label">Pro</span>
-            <span class="size-option__dimensions">393×852</span>
+            <span class="size-option__label">中屏 (6.0-6.3")</span>
+            <span class="size-option__dimensions">390×844</span>
           </button>
           <button
             class="size-option"
-            :class="{ 'is-active': deviceSize === DEVICE_SIZES.PRO_MAX }"
-            @click.stop="handleSizeChange(DEVICE_SIZES.PRO_MAX)"
+            :class="{ 'is-active': deviceSize === DEVICE_SIZES.SIZE_LARGE }"
+            @click.stop="handleSizeChange(DEVICE_SIZES.SIZE_LARGE)"
           >
-            <span class="size-option__label">Pro Max</span>
+            <span class="size-option__label">大屏 (6.4-6.6")</span>
+            <span class="size-option__dimensions">410×885</span>
+          </button>
+          <button
+            class="size-option"
+            :class="{ 'is-active': deviceSize === DEVICE_SIZES.SIZE_XLARGE }"
+            @click.stop="handleSizeChange(DEVICE_SIZES.SIZE_XLARGE)"
+          >
+            <span class="size-option__label">超大屏 (6.7"+)</span>
             <span class="size-option__dimensions">430×932</span>
           </button>
         </div>
@@ -440,92 +489,14 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center;
   padding: $spacing-xl;
-  // 使用更柔和的背景色，避免与图片对比太强烈
-  background: #f5f5f5; // 浅灰色背景
-  // border-radius: $radius-2xl;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-  // 优化过渡，避免闪烁
-  transition: background-color 0.2s ease;
-
   &--dark {
     background: #f5f5f5;
   }
 }
 
-// 设备尺寸选择器
+// 设备尺寸选择器（仅移动端使用）
 .phone-frame__size-selector {
   z-index: 10000; // 确保在真机退出提示（9999）之上
-}
-
-// PC端：下拉框样式
-.phone-frame__size-selector--dropdown {
-  position: absolute;
-  top: $spacing-md;
-  right: $spacing-md;
-  display: flex;
-  flex-direction: column;
-  min-width: 140px;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: $radius-lg;
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.12),
-    0 2px 8px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
-  transition: box-shadow 0.3s ease;
-  z-index: 10000; // 确保在真机退出提示之上
-
-  &.is-expanded {
-    box-shadow:
-      0 8px 32px rgba(0, 0, 0, 0.16),
-      0 4px 16px rgba(0, 0, 0, 0.12);
-  }
-}
-
-// 触发按钮（当前选中项）
-.size-selector__trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 14px;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-  text-align: left;
-  width: 100%;
-
-  &:hover {
-    background: rgba(0, 0, 0, 0.03);
-  }
-
-  .trigger__label {
-    font-size: $font-size-sm;
-    font-weight: $font-weight-semibold;
-    color: #000000;
-    flex: 1;
-  }
-
-  .trigger__dimensions {
-    font-size: $font-size-xs;
-    font-weight: $font-weight-medium;
-    color: rgba(0, 0, 0, 0.6);
-    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-  }
-
-  .trigger__icon {
-    width: 16px;
-    height: 16px;
-    color: rgba(0, 0, 0, 0.5);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    flex-shrink: 0;
-
-    &.is-expanded {
-      transform: rotate(180deg);
-    }
-  }
 }
 
 // 移动端：悬浮球形式，固定在右上角
@@ -586,23 +557,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-// PC端下拉框选项列表样式
-.phone-frame__size-selector--dropdown .size-selector__options {
-  min-width: 140px;
-  max-height: 0;
-  opacity: 0;
-  transition:
-    max-height 0.3s ease,
-    opacity 0.3s ease;
-  pointer-events: none;
-}
-
-.phone-frame__size-selector--dropdown.is-expanded .size-selector__options {
-  max-height: 500px;
-  opacity: 1;
-  pointer-events: auto;
 }
 
 // 移动端悬浮球选项列表样式
@@ -754,7 +708,7 @@ onUnmounted(() => {
   top: 5%; // 向上移动：12% -> 8%
   left: 50%;
   transform: translateX(-50%); // 只水平居中
-  font-size: 105px; // 增大字体：100px -> 130px
+  font-size: 90px; // 字体大小：105px -> 90px（改小）
   font-weight: 600; // 加粗
   color: #fff;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', sans-serif;
@@ -816,23 +770,6 @@ onUnmounted(() => {
     border-radius: $radius-md;
   }
 
-  .size-selector__trigger {
-    padding: 10px 12px;
-
-    .trigger__label {
-      font-size: $font-size-xs;
-    }
-
-    .trigger__dimensions {
-      font-size: 10px;
-    }
-
-    .trigger__icon {
-      width: 14px;
-      height: 14px;
-    }
-  }
-
   .size-option {
     padding: 8px 12px;
   }
@@ -858,7 +795,7 @@ onUnmounted(() => {
   }
 
   .phone-frame__wallpaper-time {
-    font-size: 80px; // 增大字体：60px -> 80px
+    font-size: 65px; // 字体大小：80px -> 65px（改小）
     letter-spacing: 6px; // 增加数字间隔：-1.5px -> 6px
   }
 

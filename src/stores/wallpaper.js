@@ -6,7 +6,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { isWorkerAvailable, workerDecodeAndParse } from '@/composables/useWorker'
 import { decodeData } from '@/utils/codec'
-import { SERIES_CONFIG } from '@/utils/constants'
+import { DATA_CACHE_BUSTER, SERIES_CONFIG } from '@/utils/constants'
 import { buildBingPreviewUrl, buildBingThumbnailUrl, buildBingUHDUrl, buildImageUrl } from '@/utils/format'
 
 export const useWallpaperStore = defineStore('wallpaper', () => {
@@ -204,14 +204,16 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
 
   /**
    * 将相对路径转换为完整 URL
+   * 使用图片专属的 cdnTag 实现精准缓存控制
    */
   function transformWallpaperUrls(wallpaper) {
+    const cdnTag = wallpaper.cdnTag // 图片专属的 CDN tag
     return {
       ...wallpaper,
-      url: wallpaper.path ? buildImageUrl(wallpaper.path) : (wallpaper.url || ''),
-      thumbnailUrl: wallpaper.thumbnailPath ? buildImageUrl(wallpaper.thumbnailPath) : (wallpaper.thumbnailUrl || ''),
-      previewUrl: wallpaper.previewPath ? buildImageUrl(wallpaper.previewPath) : (wallpaper.previewUrl || null),
-      downloadUrl: wallpaper.path ? buildImageUrl(wallpaper.path) : (wallpaper.downloadUrl || ''),
+      url: wallpaper.path ? buildImageUrl(wallpaper.path, cdnTag) : (wallpaper.url || ''),
+      thumbnailUrl: wallpaper.thumbnailPath ? buildImageUrl(wallpaper.thumbnailPath, cdnTag) : (wallpaper.thumbnailUrl || ''),
+      previewUrl: wallpaper.previewPath ? buildImageUrl(wallpaper.previewPath, cdnTag) : (wallpaper.previewUrl || null),
+      downloadUrl: wallpaper.path ? buildImageUrl(wallpaper.path, cdnTag) : (wallpaper.downloadUrl || ''),
     }
   }
 
@@ -364,7 +366,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     }
 
     try {
-      const categoryUrl = `${seriesConfig.categoryBaseUrl}/${categoryFile}`
+      const categoryUrl = `${seriesConfig.categoryBaseUrl}/${categoryFile}${DATA_CACHE_BUSTER}`
       const response = await fetchWithRetry(categoryUrl)
       let data
       try {
@@ -536,7 +538,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
         }
 
         try {
-          const yearUrl = `${seriesConfig.yearBaseUrl}/${yearInfo.file}`
+          const yearUrl = `${seriesConfig.yearBaseUrl}/${yearInfo.file}${DATA_CACHE_BUSTER}`
           const yearResponse = await fetchWithRetry(yearUrl)
           const yearData = await yearResponse.json()
 

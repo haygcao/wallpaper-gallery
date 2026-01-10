@@ -139,9 +139,9 @@ export const usePopularityStore = defineStore('popularity', () => {
     try {
       // 并行获取三种时间范围的热门数据
       const [all, weekly, monthly] = await Promise.all([
-        getPopularWallpapers(series, 100),
-        getPopularByTimeRange(series, 7, 100),
-        getPopularByTimeRange(series, 30, 100),
+        getPopularWallpapers(series, 300),
+        getPopularByTimeRange(series, 7, 300),
+        getPopularByTimeRange(series, 30, 300),
       ])
 
       allTimeData.value = all

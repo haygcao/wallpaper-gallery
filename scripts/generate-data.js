@@ -29,6 +29,63 @@ function encodeData(str) {
   return VERSION_PREFIX + mapped.split('').reverse().join('')
 }
 
+// cdnTag 缓存（从 timestamps-backup-all.txt 加载）
+let cdnTagCache = null
+
+/**
+ * 加载 cdnTag 缓存
+ * 从 timestamps-backup-all.txt 读取每张图片的 cdnTag
+ * 格式: series|relative_path|timestamp|cdnTag
+ */
+function loadCdnTagCache(repoPath) {
+  if (cdnTagCache !== null) {
+    return cdnTagCache
+  }
+
+  cdnTagCache = new Map()
+  const backupFile = path.join(repoPath, 'timestamps-backup-all.txt')
+
+  if (!fs.existsSync(backupFile)) {
+    console.log('  ⚠️ timestamps-backup-all.txt not found, cdnTag will use default')
+    return cdnTagCache
+  }
+
+  try {
+    const content = fs.readFileSync(backupFile, 'utf-8')
+    const lines = content.trim().split('\n')
+
+    for (const line of lines) {
+      const parts = line.split('|')
+      if (parts.length >= 4) {
+        const [series, relativePath, , cdnTag] = parts
+        // key 格式: series/relativePath
+        const key = `${series}/${relativePath}`
+        cdnTagCache.set(key, cdnTag)
+      }
+    }
+
+    console.log(`  ✅ Loaded ${cdnTagCache.size} cdnTag entries from backup`)
+  }
+  catch (e) {
+    console.warn(`  ⚠️ Failed to load cdnTag cache: ${e.message}`)
+  }
+
+  return cdnTagCache
+}
+
+/**
+ * 获取图片的 cdnTag
+ * @param {string} seriesId - 系列ID (desktop/mobile/avatar)
+ * @param {string} relativePath - 相对路径
+ * @param {string} repoPath - 仓库路径
+ * @returns {string|undefined} cdnTag 或 undefined
+ */
+function getCdnTag(seriesId, relativePath, repoPath) {
+  const cache = loadCdnTagCache(repoPath)
+  const key = `${seriesId}/${relativePath}`
+  return cache.get(key)
+}
+
 // 配置
 const CONFIG = {
   // GitHub 图床仓库信息
@@ -36,12 +93,15 @@ const CONFIG = {
   GITHUB_REPO: 'nuanXinProPic',
   GITHUB_BRANCH: 'main',
 
-  // 本地图床仓库路径（仅 CI 环境使用）
-  // 开源用户无需配置，会自动从线上拉取数据
+  // 本地图床仓库路径（优先级从高到低）
+  // 1. 环境变量 LOCAL_REPO_PATH（推荐，在 .env.local 中配置）
+  // 2. CI 环境：项目根目录下的 nuanXinProPic
+  // 3. 本地开发：同级目录的 nuanXinProPic
   LOCAL_REPO_PATHS: [
-    path.resolve(__dirname, '../nuanXinProPic'), // CI 环境：项目根目录下
-    path.resolve(__dirname, '../../nuanXinProPic'), // 本地开发：同级目录（仅项目维护者使用）
-  ],
+    process.env.LOCAL_REPO_PATH, // 优先使用环境变量
+    path.resolve(__dirname, '../nuanXinProPic'), // CI 环境
+    path.resolve(__dirname, '../../nuanXinProPic'), // 本地开发（同级目录）
+  ].filter(Boolean), // 过滤掉 undefined
 
   // 线上数据源（开源用户使用）
   // 当本地图床仓库不存在时，直接从线上拉取已生成的 JSON 数据
@@ -479,6 +539,12 @@ function generateWallpaperData(files, seriesConfig, localRepoPath = null) {
       }
     }
 
+    // 获取图片专属的 cdnTag（用于精准 CDN 缓存控制）
+    let cdnTag
+    if (localRepoPath) {
+      cdnTag = getCdnTag(seriesConfig.id, relativePath, localRepoPath)
+    }
+
     const wallpaperData = {
       id: `${seriesConfig.id}-${index + 1}`,
       filename: file.name,
@@ -489,6 +555,11 @@ function generateWallpaperData(files, seriesConfig, localRepoPath = null) {
       format: ext,
       createdAt: uploadDate.toISOString(),
       sha: file.sha || '',
+    }
+
+    // 添加 cdnTag（仅当存在时）
+    if (cdnTag) {
+      wallpaperData.cdnTag = cdnTag
     }
 
     // 添加二级分类（仅当存在时）

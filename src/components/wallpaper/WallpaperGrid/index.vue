@@ -3,13 +3,13 @@ import { gsap } from 'gsap'
 import { Flip } from 'gsap/Flip'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import LoadingSpinner from '@/components/common/feedback/LoadingSpinner.vue'
 // import Pagination from '@/components/common/Pagination.vue' // 注释：改用滚动加载模式
 import { useDevice } from '@/composables/useDevice'
 // import { usePagination } from '@/composables/usePagination' // 注释：改用滚动加载模式
 import { useViewMode } from '@/composables/useViewMode'
 import { useWallpaperType } from '@/composables/useWallpaperType'
-import WallpaperCard from './WallpaperCard.vue'
+import WallpaperCard from '../WallpaperCard.vue'
 
 const props = defineProps({
   wallpapers: {
@@ -49,7 +49,7 @@ gsap.registerPlugin(Flip)
 const router = useRouter()
 const { currentSeries, currentSeriesConfig, availableSeriesOptions } = useWallpaperType()
 const { viewMode, setViewMode } = useViewMode()
-const { isMobile } = useDevice()
+const { isMobile, isMobileOrTablet } = useDevice()
 
 // 从 props.popularityData 获取热门排名、下载次数和访问量
 function getPopularRank(filename) {
@@ -79,20 +79,16 @@ function getViewCount(filename) {
 const gridRef = ref(null)
 const wrapperRef = ref(null)
 const isAnimating = ref(false)
-// PC端用于控制动画切换的视图模式
+// 用于控制动画切换的视图模式（PC端和移动端统一使用）
 const displayViewMode = ref(viewMode.value)
-// 实际渲染使用的视图模式（移动端瀑布流使用特殊实现）
+// 实际渲染使用的视图模式
 const effectiveViewMode = computed(() => {
-  if (isMobile.value) {
-    // 移动端：列表和网格正常支持，瀑布流使用 Flex 分列实现
-    return viewMode.value === 'masonry' ? 'masonry' : viewMode.value
+  if (isMobileOrTablet.value) {
+    // 移动端：只支持 grid 和 list，瀑布流自动转为 grid
+    const mode = displayViewMode.value
+    return mode === 'masonry' ? 'grid' : mode
   }
   return displayViewMode.value
-})
-
-// 移动端是否使用 Flex 瀑布流（用于逻辑判断和模板渲染）
-const useMobileMasonry = computed(() => {
-  return isMobile.value && viewMode.value === 'masonry'
 })
 
 // ========================================
@@ -105,78 +101,6 @@ const scrollPaused = ref(false) // 滚动加载暂停标记
 
 // 定时器引用集合（用于组件卸载时清理）
 const timers = new Set()
-
-// ========================================
-// 移动端 Flex 瀑布流分列相关
-// ========================================
-const leftColumnRef = ref(null)
-const rightColumnRef = ref(null)
-const leftColumnItems = ref([])
-const rightColumnItems = ref([])
-const leftColumnHeight = ref(0)
-const rightColumnHeight = ref(0)
-const distributedCount = ref(0) // 已分配的元素数量
-
-// 重置分列数据
-function resetMasonryColumns() {
-  leftColumnItems.value = []
-  rightColumnItems.value = []
-  leftColumnHeight.value = 0
-  rightColumnHeight.value = 0
-  distributedCount.value = 0
-}
-
-// 分配元素到最短列
-function distributeToColumns(items) {
-  for (const item of items) {
-    // 添加到较短的列
-    if (leftColumnHeight.value <= rightColumnHeight.value) {
-      leftColumnItems.value.push(item)
-      // 预估高度（基于图片比例）
-      leftColumnHeight.value += estimateItemHeight(item)
-    }
-    else {
-      rightColumnItems.value.push(item)
-      rightColumnHeight.value += estimateItemHeight(item)
-    }
-  }
-  distributedCount.value = leftColumnItems.value.length + rightColumnItems.value.length
-}
-
-// 预估元素高度（基于图片比例）
-function estimateItemHeight(_item) {
-  const ratio = currentSeriesConfig.value?.aspectRatio || '16/10'
-  const [w, h] = ratio.split('/').map(Number)
-  // 假设列宽为 100，计算高度
-  return (100 * h) / w
-}
-
-// 图片加载完成后更新列高度
-function handleImageLoad(_column, _index) {
-  nextTick(() => {
-    updateColumnHeights()
-  })
-}
-
-// 更新列高度（从 DOM 读取实际高度）
-function updateColumnHeights() {
-  if (leftColumnRef.value) {
-    leftColumnHeight.value = leftColumnRef.value.offsetHeight
-  }
-  if (rightColumnRef.value) {
-    rightColumnHeight.value = rightColumnRef.value.offsetHeight
-  }
-}
-
-// 初始化分列数据
-function initMasonryColumns() {
-  if (!useMobileMasonry.value)
-    return
-
-  resetMasonryColumns()
-  const items = props.wallpapers.slice(0, displayCount.value)
-  distributeToColumns(items)
-}
 
 // 显示的项目
 const displayedItems = computed(() => {
@@ -212,22 +136,11 @@ function loadMore() {
 
   const timer = setTimeout(() => {
     timers.delete(timer)
-    const oldCount = displayCount.value
     const newCount = Math.min(
       displayCount.value + PAGE_SIZE,
       props.wallpapers.length,
     )
     displayCount.value = newCount
-
-    // 如果是瀑布流模式，需要将新加载的元素分配到列中
-    if (useMobileMasonry.value) {
-      // 先更新实际列高度
-      updateColumnHeights()
-      // 只分配新增的元素
-      const newItems = props.wallpapers.slice(oldCount, newCount)
-      distributeToColumns(newItems)
-    }
-
     isLoadingMore.value = false
   }, 150)
   timers.add(timer)
@@ -309,12 +222,14 @@ function handleResetFilters() {
 const showGrid = ref(true)
 
 // ========================================
-// 移动端手势滑动支持（无动画，直接切换）
+// 移动端手势滑动支持（网格和列表两种模式）
 // ========================================
-const VIEW_MODE_ORDER = ['grid', 'masonry', 'list']
+const MOBILE_VIEW_MODE_ORDER = ['grid', 'list']
+const PC_VIEW_MODE_ORDER = ['grid', 'masonry', 'list']
 
 function getModeIndex(mode) {
-  return VIEW_MODE_ORDER.indexOf(mode)
+  const order = isMobileOrTablet.value ? MOBILE_VIEW_MODE_ORDER : PC_VIEW_MODE_ORDER
+  return order.indexOf(mode)
 }
 
 const touchStartX = ref(0)
@@ -322,7 +237,7 @@ const touchStartY = ref(0)
 const isSwiping = ref(false)
 
 function handleTouchStart(e) {
-  if (!isMobile.value)
+  if (!isMobileOrTablet.value)
     return
   touchStartX.value = e.touches[0].clientX
   touchStartY.value = e.touches[0].clientY
@@ -330,7 +245,7 @@ function handleTouchStart(e) {
 }
 
 function handleTouchMove(e) {
-  if (!isMobile.value)
+  if (!isMobileOrTablet.value)
     return
 
   const deltaX = e.touches[0].clientX - touchStartX.value
@@ -343,10 +258,11 @@ function handleTouchMove(e) {
 }
 
 function handleTouchEnd(e) {
-  if (!isMobile.value || !isSwiping.value)
+  if (!isMobileOrTablet.value || !isSwiping.value)
     return
 
   const deltaX = e.changedTouches[0].clientX - touchStartX.value
+  const viewModeOrder = isMobileOrTablet.value ? MOBILE_VIEW_MODE_ORDER : PC_VIEW_MODE_ORDER
 
   // 滑动距离超过 80px 才触发切换
   if (Math.abs(deltaX) > 80) {
@@ -355,15 +271,15 @@ function handleTouchEnd(e) {
 
     if (deltaX < 0) {
       // 向左滑 → 下一个模式
-      newIndex = (currentIndex + 1) % VIEW_MODE_ORDER.length
+      newIndex = (currentIndex + 1) % viewModeOrder.length
     }
     else {
       // 向右滑 → 上一个模式
-      newIndex = (currentIndex - 1 + VIEW_MODE_ORDER.length) % VIEW_MODE_ORDER.length
+      newIndex = (currentIndex - 1 + viewModeOrder.length) % viewModeOrder.length
     }
 
     // 直接切换视图模式（无动画）
-    setViewMode(VIEW_MODE_ORDER[newIndex])
+    setViewMode(viewModeOrder[newIndex])
   }
 
   isSwiping.value = false
@@ -374,18 +290,9 @@ const isFlipWarmedUp = ref(false)
 
 // ========================================
 // 视图切换动画 - 使用 GSAP Flip 实现丝滑形态变换
+// 移动端和 PC 端统一支持（移动端只有 grid/list 两种模式）
 // ========================================
 watch(viewMode, async (newMode, oldMode) => {
-  // 移动端：直接切换，如果是瀑布流则初始化分列数据
-  if (isMobile.value) {
-    if (newMode === 'masonry') {
-      resetMasonryColumns()
-      const items = props.wallpapers.slice(0, displayCount.value)
-      distributeToColumns(items)
-    }
-    return
-  }
-
   if (!gridRef.value || newMode === oldMode)
     return
 
@@ -423,14 +330,29 @@ watch(viewMode, async (newMode, oldMode) => {
     displayViewMode.value = newMode
     await nextTick()
 
+    // 移动端使用更快的动画，减少等待感
+    const animationConfig = isMobileOrTablet.value
+      ? {
+          duration: 0.35,
+          ease: 'power2.out',
+          stagger: {
+            amount: 0.08,
+            from: 'start',
+            grid: [2, 'auto'], // 移动端 2 列布局
+          },
+        }
+      : {
+          duration: 0.45,
+          ease: 'power2.inOut',
+          stagger: {
+            amount: 0.12,
+            from: 'start',
+          },
+        }
+
     // 执行 Flip 动画
     Flip.from(state, {
-      duration: 0.45,
-      ease: 'power2.inOut',
-      stagger: {
-        amount: 0.12,
-        from: 'start',
-      },
+      ...animationConfig,
       absolute: true,
       scale: true,
       onComplete: () => {
@@ -476,44 +398,66 @@ function animateCardsIn() {
   nextTick(() => {
     const cards = gridRef.value?.querySelectorAll('.wallpaper-card')
     if (cards && cards.length > 0) {
-      // 先设置初始状态
-      gsap.set(cards, {
-        opacity: 0,
-        y: 15,
-      })
+      // 移动端使用更有活力的弹出动画
+      if (isMobileOrTablet.value) {
+        gsap.set(cards, {
+          opacity: 0,
+          scale: 0.85,
+          y: 20,
+        })
 
-      // 执行动画，不使用 clearProps 避免布局抖动
-      gsap.to(cards, {
-        opacity: 1,
-        y: 0,
-        duration: 0.3,
-        stagger: {
-          amount: 0.2,
-          from: 'start',
-        },
-        ease: 'power2.out',
-        onComplete: () => {
-          // 动画完成后手动清除 transform 和 opacity，避免 clearProps: 'all' 导致的抖动
-          cards.forEach((card) => {
-            card.style.transform = ''
-            card.style.opacity = ''
-          })
-          warmupFlip()
-        },
-      })
+        gsap.to(cards, {
+          opacity: 1,
+          scale: 1,
+          y: 0,
+          duration: 0.4,
+          stagger: {
+            amount: 0.35,
+            from: 'start',
+            grid: [2, 'auto'], // 2列网格的动画顺序
+          },
+          ease: 'back.out(1.2)',
+          onComplete: () => {
+            cards.forEach((card) => {
+              card.style.transform = ''
+              card.style.opacity = ''
+            })
+          },
+        })
+      }
+      else {
+        // PC端保持原有的简洁动画
+        gsap.set(cards, {
+          opacity: 0,
+          y: 15,
+        })
+
+        gsap.to(cards, {
+          opacity: 1,
+          y: 0,
+          duration: 0.3,
+          stagger: {
+            amount: 0.2,
+            from: 'start',
+          },
+          ease: 'power2.out',
+          onComplete: () => {
+            cards.forEach((card) => {
+              card.style.transform = ''
+              card.style.opacity = ''
+            })
+            warmupFlip()
+          },
+        })
+      }
     }
   })
 }
 
 // 初始加载动画
 onMounted(() => {
-  // 添加滚动监听（移动端）
+  // 添加滚动监听
   window.addEventListener('scroll', handleScroll)
-
-  // 初始化移动端瀑布流分列
-  if (useMobileMasonry.value && props.wallpapers.length > 0) {
-    initMasonryColumns()
-  }
 
   if (gridRef.value && displayedItems.value.length > 0) {
     animateCardsIn()
@@ -552,18 +496,8 @@ watch(() => props.wallpapers, async (newVal, oldVal) => {
     && oldVal.length >= PAGE_SIZE
     && newVal[0]?.id === oldVal[0]?.id
 
-  // 后台追加数据时，只更新瀑布流分列，不重置显示数量
+  // 后台追加数据时，不需要重置显示数量
   if (isBackgroundAppend) {
-    if (useMobileMasonry.value) {
-      // 先更新实际列高度
-      await nextTick()
-      updateColumnHeights()
-      // 只分配新增的元素
-      const newItems = newVal.slice(distributedCount.value)
-      if (newItems.length > 0) {
-        distributeToColumns(newItems)
-      }
-    }
     return
   }
 
@@ -571,15 +505,6 @@ watch(() => props.wallpapers, async (newVal, oldVal) => {
 
   // 重置显示数量（仅在非后台追加时）
   displayCount.value = PAGE_SIZE
-
-  // 重置瀑布流分列数据
-  if (useMobileMasonry.value) {
-    resetMasonryColumns()
-    if (newVal && newVal.length > 0) {
-      const items = newVal.slice(0, PAGE_SIZE)
-      distributeToColumns(items)
-    }
-  }
 
   // 首次加载（从无到有）
   if (!oldVal || oldVal.length === 0) {
@@ -669,7 +594,7 @@ const skeletonCount = computed(() => isMobile.value ? 6 : 12)
     <!-- Loading State: 骨架屏 -->
     <div v-if="loading" class="loading-state">
       <!-- 移动端加载提示 -->
-      <div v-if="isMobile" class="mobile-loading-hint">
+      <div v-if="isMobileOrTablet" class="mobile-loading-hint">
         <LoadingSpinner size="md" />
         <p class="loading-text">
           正在加载{{ currentSeriesName }}...
@@ -683,7 +608,7 @@ const skeletonCount = computed(() => isMobile.value ? 6 : 12)
             <div class="skeleton-shimmer" />
           </div>
           <!-- 桌面端显示骨架信息 -->
-          <div v-if="!isMobile" class="skeleton-info">
+          <div v-if="!isMobileOrTablet" class="skeleton-info">
             <div class="skeleton-title" />
             <div class="skeleton-meta" />
           </div>
@@ -749,52 +674,8 @@ const skeletonCount = computed(() => isMobile.value ? 6 : 12)
 
     <!-- Grid -->
     <template v-else>
-      <!-- 移动端 Flex 瀑布流布局 -->
+      <!-- 壁纸网格（网格、列表、PC瀑布流） -->
       <div
-        v-if="useMobileMasonry"
-        class="mobile-masonry"
-        :class="{ 'is-hidden': !showGrid }"
-        @touchstart="handleTouchStart"
-        @touchmove="handleTouchMove"
-        @touchend="handleTouchEnd"
-      >
-        <div ref="leftColumnRef" class="masonry-column">
-          <WallpaperCard
-            v-for="(wallpaper, index) in leftColumnItems"
-            :key="wallpaper.id"
-            :wallpaper="wallpaper"
-            :index="index"
-            :search-query="searchQuery"
-            view-mode="masonry"
-            :aspect-ratio="currentSeriesConfig?.aspectRatio || '16/10'"
-            :popular-rank="getPopularRank(wallpaper.filename)"
-            :download-count="getDownloadCount(wallpaper.filename)"
-            :view-count="getViewCount(wallpaper.filename)"
-            @click="handleSelect"
-            @image-load="handleImageLoad('left', index)"
-          />
-        </div>
-        <div ref="rightColumnRef" class="masonry-column">
-          <WallpaperCard
-            v-for="(wallpaper, index) in rightColumnItems"
-            :key="wallpaper.id"
-            :wallpaper="wallpaper"
-            :index="index"
-            :search-query="searchQuery"
-            view-mode="masonry"
-            :aspect-ratio="currentSeriesConfig?.aspectRatio || '16/10'"
-            :popular-rank="getPopularRank(wallpaper.filename)"
-            :download-count="getDownloadCount(wallpaper.filename)"
-            :view-count="getViewCount(wallpaper.filename)"
-            @click="handleSelect"
-            @image-load="handleImageLoad('right', index)"
-          />
-        </div>
-      </div>
-
-      <!-- 常规布局（网格、列表、PC瀑布流） -->
-      <div
-        v-else
         ref="gridRef"
         class="wallpaper-grid"
         :class="[`view-${effectiveViewMode}`, `aspect-${aspectType}`, { 'is-hidden': !showGrid, 'is-animating': isAnimating }]"
@@ -962,26 +843,6 @@ const skeletonCount = computed(() => isMobile.value ? 6 : 12)
   gap: $spacing-sm;
   color: var(--color-text-muted);
   font-size: $font-size-sm;
-}
-
-// ========================================
-// 移动端 Flex 瀑布流布局
-// ========================================
-.mobile-masonry {
-  display: flex;
-  gap: $spacing-sm;
-  transition: opacity 0.15s ease;
-
-  &.is-hidden {
-    opacity: 0;
-  }
-
-  .masonry-column {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: $spacing-sm;
-  }
 }
 
 .wallpaper-grid {
