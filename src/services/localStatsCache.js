@@ -1,11 +1,12 @@
 // ========================================
 // 本地统计缓存管理
 // ========================================
-// 管理 localStorage 缓存和 sessionStorage 乐观更新队列
+// 管理 localStorage 缓存和乐观更新队列
 
 const CACHE_PREFIX = 'stats_'
 const OPTIMISTIC_KEY = 'stats_optimistic'
 const CACHE_TTL = 60 * 60 * 1000 // 1 小时
+const OPTIMISTIC_TTL = 24 * 60 * 60 * 1000 // 乐观更新 24 小时后过期
 
 /**
  * 获取缓存的静态统计数据
@@ -55,20 +56,34 @@ export function setCachedStats(series, statsMap) {
 }
 
 /**
- * 获取乐观更新队列
- * @returns {object} - { views: { imageId: count }, downloads: { imageId: count } }
+ * 获取乐观更新队列（使用 localStorage 持久化，24小时后过期）
+ * @returns {object} - { views: { imageId: count }, downloads: { imageId: count }, timestamp: number }
  */
 export function getOptimisticQueue() {
   try {
-    const cached = sessionStorage.getItem(OPTIMISTIC_KEY)
+    const cached = localStorage.getItem(OPTIMISTIC_KEY)
     if (!cached) {
-      return { views: {}, downloads: {} }
+      return { views: {}, downloads: {}, timestamp: Date.now() }
     }
-    return JSON.parse(cached)
+
+    const data = JSON.parse(cached)
+
+    // 检查是否过期（超过 24 小时清除，避免与静态数据重复）
+    if (Date.now() - (data.timestamp || 0) > OPTIMISTIC_TTL) {
+      localStorage.removeItem(OPTIMISTIC_KEY)
+      return { views: {}, downloads: {}, timestamp: Date.now() }
+    }
+
+    // 兼容旧格式（没有 timestamp 的数据）
+    if (!data.timestamp) {
+      data.timestamp = Date.now()
+    }
+
+    return data
   }
   catch (error) {
     console.warn('[LocalStatsCache] 读取乐观队列失败:', error)
-    return { views: {}, downloads: {} }
+    return { views: {}, downloads: {}, timestamp: Date.now() }
   }
 }
 
@@ -87,7 +102,12 @@ export function incrementOptimistic(imageId, type) {
     }
     queue[key][imageId] += 1
 
-    sessionStorage.setItem(OPTIMISTIC_KEY, JSON.stringify(queue))
+    // 更新时间戳（保持首次操作的时间，用于过期判断）
+    if (!queue.timestamp) {
+      queue.timestamp = Date.now()
+    }
+
+    localStorage.setItem(OPTIMISTIC_KEY, JSON.stringify(queue))
   }
   catch (error) {
     console.warn('[LocalStatsCache] 更新乐观队列失败:', error)
@@ -99,7 +119,7 @@ export function incrementOptimistic(imageId, type) {
  */
 export function clearOptimisticQueue() {
   try {
-    sessionStorage.removeItem(OPTIMISTIC_KEY)
+    localStorage.removeItem(OPTIMISTIC_KEY)
   }
   catch (error) {
     console.warn('[LocalStatsCache] 清除乐观队列失败:', error)
