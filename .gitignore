@@ -15,7 +15,9 @@ dist-ssr
 # Auto-generated
 auto-imports.d.ts
 components.d.ts
-public/data/
+public/data/*
+!public/data/stats/
+public/version.json
 
 # Editor directories and files
 .vscode/*
@@ -29,6 +31,9 @@ public/data/
 *.sw?
 .kiro
 .claude
+.shared
 .spec-workflow
 .code-workspace
+.zcf
+ARCHITECTURE.md
 SEO提交流程.md

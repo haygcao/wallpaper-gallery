@@ -2,14 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DiyAvatarBanner from '@/components/avatar/DiyAvatarBanner.vue'
-import AnnouncementBanner from '@/components/common/AnnouncementBanner.vue'
-import BackToTop from '@/components/common/BackToTop.vue'
-import FilterPanel from '@/components/common/FilterPanel.vue'
-import PopularWallpapers3D from '@/components/home/PopularWallpapers3D.vue'
-// 2D 版本备用：import PopularWallpapers from '@/components/home/PopularWallpapers.vue'
-import PortraitWallpaperModal from '@/components/wallpaper/PortraitWallpaperModal.vue'
-import WallpaperGrid from '@/components/wallpaper/WallpaperGrid.vue'
-import WallpaperModal from '@/components/wallpaper/WallpaperModal.vue'
+import AnnouncementBanner from '@/components/common/feedback/AnnouncementBanner.vue'
+import FilterPanel from '@/components/common/form/FilterPanel.vue'
+import BackToTop from '@/components/common/navigation/BackToTop.vue'
+import PortraitWallpaperModal from '@/components/wallpaper/PortraitWallpaperModal/index.vue'
+import WallpaperGrid from '@/components/wallpaper/WallpaperGrid/index.vue'
+import WallpaperModal from '@/components/wallpaper/WallpaperModal/index.vue'
 
 import { isMobileDevice } from '@/composables/useDevice'
 // Composables
@@ -77,7 +75,7 @@ const filteredWallpapers = computed(() =>
 const resultCount = computed(() => filteredWallpapers.value.length)
 
 // 是否有激活的筛选条件
-const hasActiveFilters = computed(() => filterStore.hasActiveFilters())
+const hasActiveFilters = computed(() => filterStore.hasActiveFilters(currentSeries.value))
 
 // ========================================
 // Modal Management
@@ -141,7 +139,7 @@ async function loadSeriesData(series) {
 // ========================================
 
 function handleReset() {
-  filterStore.resetFilters(filterStore.sortBy)
+  filterStore.resetFilters(filterStore.sortBy, currentSeries.value)
 }
 
 function handleReload() {
@@ -167,6 +165,19 @@ watch(currentSeries, async (newSeries, oldSeries) => {
     return
   if (newSeries && newSeries !== oldSeries) {
     await loadSeriesData(newSeries)
+  }
+})
+
+// 监听 Bing 系列的月份筛选变化，按需加载对应年份数据
+watch(() => filterStore.categoryFilter, async (newValue) => {
+  if (!isInitialized.value || currentSeries.value !== 'bing')
+    return
+
+  // 检查是否是年月格式（YYYY-MM）
+  if (newValue && /^\d{4}-\d{2}$/.test(newValue)) {
+    const year = Number.parseInt(newValue.split('-')[0])
+    // 按需加载该年份的数据
+    await wallpaperStore.loadBingYear(year)
   }
 })
 
@@ -209,26 +220,6 @@ onMounted(async () => {
       <!-- Announcement Banner -->
       <AnnouncementBanner />
 
-      <!-- 热门壁纸 3D Coverflow - 仅电脑壁纸系列显示 -->
-      <PopularWallpapers3D
-        v-if="currentSeries === 'desktop'"
-        :series="currentSeries"
-        :wallpapers="wallpaperStore.wallpapers"
-        :popularity-data="popularityStore.allTimeData"
-        :loading="loading"
-        @select="handleSelectWallpaper"
-      />
-
-      <!-- 热门壁纸 2D 版本（备用，如需切换可替换上方组件）
-      <PopularWallpapers
-        v-if="currentSeries === 'desktop'"
-        :series="currentSeries"
-        :wallpapers="wallpaperStore.wallpapers"
-        :popularity-data="popularityStore.allTimeData"
-        :loading="loading"
-        @select="handleSelectWallpaper"
-      /> -->
-
       <!-- DIY 头像工具入口 - 仅头像系列显示 -->
       <DiyAvatarBanner v-if="currentSeries === 'avatar'" />
 
@@ -236,6 +227,7 @@ onMounted(async () => {
       <FilterPanel
         v-model:sort-by="filterStore.sortBy"
         v-model:format-filter="filterStore.formatFilter"
+        v-model:resolution-filter="filterStore.resolutionFilter"
         v-model:category-filter="filterStore.categoryFilter"
         v-model:subcategory-filter="filterStore.subcategoryFilter"
         :category-options="categoryOptions"
