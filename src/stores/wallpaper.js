@@ -6,19 +6,20 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { isWorkerAvailable, workerDecodeAndParse } from '@/composables/useWorker'
 import { decodeData } from '@/utils/codec'
-import { SERIES_CONFIG } from '@/utils/constants'
+import { DATA_CACHE_BUSTER, SERIES_CONFIG } from '@/utils/constants'
 import { buildBingPreviewUrl, buildBingThumbnailUrl, buildBingUHDUrl, buildImageUrl } from '@/utils/format'
+import { LRUCache } from '@/utils/lruCache'
 
 export const useWallpaperStore = defineStore('wallpaper', () => {
   // ========================================
   // State
   // ========================================
 
-  // 系列数据缓存（只存储索引信息）
+  // 系列数据缓存（只存储索引信息，最多缓存 5 个系列）
   const seriesIndexCache = ref({})
 
-  // 分类数据缓存（按需加载）
-  const categoryCache = ref({})
+  // 分类数据缓存（使用 LRU 缓存，最多保留 15 个分类，约 60MB）
+  const categoryCache = new LRUCache(15)
 
   // Bing 壁纸缓存（完整加载后缓存）
   const bingWallpapersCache = ref(null)
@@ -49,6 +50,9 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
   // 重试配置
   const MAX_RETRIES = 3
   const RETRY_DELAY = 1000 // 1秒
+
+  // 请求版本号（用于防止竞态条件）
+  let requestVersion = 0
 
   // ========================================
   // Getters
@@ -204,14 +208,16 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
 
   /**
    * 将相对路径转换为完整 URL
+   * 使用图片专属的 cdnTag 实现精准缓存控制
    */
   function transformWallpaperUrls(wallpaper) {
+    const cdnTag = wallpaper.cdnTag // 图片专属的 CDN tag
     return {
       ...wallpaper,
-      url: wallpaper.path ? buildImageUrl(wallpaper.path) : (wallpaper.url || ''),
-      thumbnailUrl: wallpaper.thumbnailPath ? buildImageUrl(wallpaper.thumbnailPath) : (wallpaper.thumbnailUrl || ''),
-      previewUrl: wallpaper.previewPath ? buildImageUrl(wallpaper.previewPath) : (wallpaper.previewUrl || null),
-      downloadUrl: wallpaper.path ? buildImageUrl(wallpaper.path) : (wallpaper.downloadUrl || ''),
+      url: wallpaper.path ? buildImageUrl(wallpaper.path, cdnTag) : (wallpaper.url || ''),
+      thumbnailUrl: wallpaper.thumbnailPath ? buildImageUrl(wallpaper.thumbnailPath, cdnTag) : (wallpaper.thumbnailUrl || ''),
+      previewUrl: wallpaper.previewPath ? buildImageUrl(wallpaper.previewPath, cdnTag) : (wallpaper.previewUrl || null),
+      downloadUrl: wallpaper.path ? buildImageUrl(wallpaper.path, cdnTag) : (wallpaper.downloadUrl || ''),
     }
   }
 
@@ -352,8 +358,8 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     const cacheKey = `${seriesId}:${categoryFile}`
 
     // 如果已有缓存，直接返回
-    if (categoryCache.value[cacheKey]) {
-      return categoryCache.value[cacheKey]
+    if (categoryCache.has(cacheKey)) {
+      return categoryCache.get(cacheKey)
     }
 
     const seriesConfig = SERIES_CONFIG[seriesId]
@@ -364,7 +370,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     }
 
     try {
-      const categoryUrl = `${seriesConfig.categoryBaseUrl}/${categoryFile}`
+      const categoryUrl = `${seriesConfig.categoryBaseUrl}/${categoryFile}${DATA_CACHE_BUSTER}`
       const response = await fetchWithRetry(categoryUrl)
       let data
       try {
@@ -409,8 +415,8 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       // 转换 URL
       const transformedList = wallpaperList.map(w => transformWallpaperUrls(w))
 
-      // 存入缓存
-      categoryCache.value[cacheKey] = transformedList
+      // 存入缓存（LRU 会自动淘汰旧数据）
+      categoryCache.set(cacheKey, transformedList)
       return transformedList
     }
     catch (e) {
@@ -422,8 +428,9 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
   }
 
   /**
-   * 初始化 Bing 每日壁纸系列
+   * 初始化每日 Bing 壁纸系列
    * Bing 系列使用年度数据文件结构，不同于其他系列的分类结构
+   * 优化：只加载当前年份数据，用户切换月份时按需加载其他年份
    */
   async function initBingSeries(seriesId, forceRefresh = false) {
     // 如果已加载相同系列且有数据，跳过
@@ -440,8 +447,19 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       errorType.value = null
       isBackgroundLoading.value = false
       expectedTotal.value = bingWallpapersCache.value.length
+      // 恢复 loadedCategories，防止切换系列后数据重复加载
+      loadedCategories.value = new Set()
+      bingWallpapersCache.value.forEach((w) => {
+        loadedCategories.value.add(w.date)
+        // 同时添加年份标记
+        const year = w.date.substring(0, 4)
+        loadedCategories.value.add(year)
+      })
       return
     }
+
+    // 递增请求版本号，用于防止竞态条件
+    const currentRequestVersion = ++requestVersion
 
     // 立即清空旧数据
     wallpapers.value = []
@@ -463,131 +481,158 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       const indexResponse = await fetchWithRetry(indexUrl)
       const indexData = await indexResponse.json()
 
-      // 记录预期总数
-      expectedTotal.value = indexData.total || 0
+      // 检查请求是否过期
+      if (requestVersion !== currentRequestVersion) {
+        return
+      }
 
-      // 2. 首屏优化：先加载最近数据 (latest.json)
-      let initialWallpapers = []
-      try {
-        const latestUrl = seriesConfig.latestUrl
-        const latestResponse = await fetchWithRetry(latestUrl)
-        const latestData = await latestResponse.json()
+      // 保存索引数据到缓存
+      seriesIndexCache.value[seriesId] = indexData
 
-        if (latestData.items && Array.isArray(latestData.items)) {
-          initialWallpapers = latestData.items.map((item, index) =>
+      // 2. 只加载当前年份的数据（一次性加载，不分两步）
+      const currentYear = new Date().getFullYear()
+      const currentYearInfo = indexData.years?.find(y => y.year === currentYear)
+
+      if (currentYearInfo) {
+        const yearUrl = `${seriesConfig.yearBaseUrl}/${currentYearInfo.file}${DATA_CACHE_BUSTER}`
+        const yearResponse = await fetchWithRetry(yearUrl)
+        const yearData = await yearResponse.json()
+
+        // 再次检查请求是否过期
+        if (requestVersion !== currentRequestVersion) {
+          return
+        }
+
+        if (yearData.items && Array.isArray(yearData.items)) {
+          // 转换数据格式
+          const transformedItems = yearData.items.map((item, index) =>
             transformBingWallpaper(item, index),
           )
+
+          // 按日期降序排序
+          transformedItems.sort((a, b) => b.date.localeCompare(a.date))
+
+          // 一次性设置数据
+          wallpapers.value = transformedItems
+          initialLoadedCount.value = transformedItems.length
+          expectedTotal.value = transformedItems.length
+
+          // 标记已加载的年份
+          loadedCategories.value.add(currentYear.toString())
+
+          // 标记已加载的日期
+          transformedItems.forEach((w) => {
+            loadedCategories.value.add(w.date)
+          })
         }
       }
-      catch (e) {
-        console.warn('Failed to load latest.json, will load from year data:', e)
-      }
 
-      // 3. 立即显示最近数据
-      if (initialWallpapers.length > 0) {
-        wallpapers.value = initialWallpapers
-        initialLoadedCount.value = initialWallpapers.length
-        // 标记已加载的日期
-        initialWallpapers.forEach((w) => {
-          loadedCategories.value.add(w.date)
-        })
-      }
-
-      // 4. 清除错误状态
+      // 3. 清除错误状态
       error.value = null
       errorType.value = null
-
-      // 5. 后台加载所有年度数据
-      if (indexData.years && Array.isArray(indexData.years) && indexData.years.length > 0) {
-        isBackgroundLoading.value = true
-        loadBingYearDataSilently(seriesId, indexData.years)
-      }
-      else {
-        // 没有年度数据，预期总数为实际数量
-        expectedTotal.value = wallpapers.value.length
-      }
     }
     catch (e) {
+      // 如果请求已过期，不处理错误
+      if (requestVersion !== currentRequestVersion) {
+        return
+      }
       console.error(`Failed to init Bing series:`, e)
       const errType = classifyError(e)
       errorType.value = errType
-      error.value = getErrorMessage(e, errType, 'Bing 每日壁纸')
+      error.value = getErrorMessage(e, errType, '每日 Bing 壁纸')
       wallpapers.value = []
     }
     finally {
-      loading.value = false
+      // 只有当请求未过期时才更新 loading 状态
+      if (requestVersion === currentRequestVersion) {
+        loading.value = false
+      }
     }
   }
 
   /**
-   * 后台加载 Bing 年度数据（渐进式更新，每加载完一个年份立即追加显示）
+   * 加载指定年份的 Bing 数据（用户切换月份时按需加载）
    */
-  async function loadBingYearDataSilently(seriesId, years) {
+  async function loadBingYear(year) {
+    const seriesId = 'bing'
     const seriesConfig = SERIES_CONFIG[seriesId]
 
+    // 如果已加载该年份，跳过
+    if (loadedCategories.value.has(year.toString())) {
+      return
+    }
+
+    // 记录当前请求版本号
+    const currentRequestVersion = requestVersion
+
+    // 获取索引数据
+    let indexData = seriesIndexCache.value[seriesId]
+    if (!indexData) {
+      const indexUrl = seriesConfig.indexUrl
+      const indexResponse = await fetchWithRetry(indexUrl)
+      indexData = await indexResponse.json()
+
+      // 检查请求是否过期
+      if (requestVersion !== currentRequestVersion) {
+        return
+      }
+
+      seriesIndexCache.value[seriesId] = indexData
+    }
+
+    // 查找年份信息
+    const yearInfo = indexData.years?.find(y => y.year === year)
+    if (!yearInfo) {
+      console.warn(`Year ${year} not found in Bing index`)
+      return
+    }
+
     try {
-      // 按年份降序加载（最新的先加载）
-      const sortedYears = [...years].sort((a, b) => b.year - a.year)
+      const yearUrl = `${seriesConfig.yearBaseUrl}/${yearInfo.file}${DATA_CACHE_BUSTER}`
+      const yearResponse = await fetchWithRetry(yearUrl)
+      const yearData = await yearResponse.json()
 
-      for (const yearInfo of sortedYears) {
-        // 检查系列是否已切换
-        if (currentLoadedSeries.value !== seriesId) {
-          return
-        }
+      // 检查请求是否过期
+      if (requestVersion !== currentRequestVersion) {
+        return
+      }
 
-        try {
-          const yearUrl = `${seriesConfig.yearBaseUrl}/${yearInfo.file}`
-          const yearResponse = await fetchWithRetry(yearUrl)
-          const yearData = await yearResponse.json()
+      if (yearData.items && Array.isArray(yearData.items)) {
+        // 过滤已加载的数据
+        const newItems = yearData.items.filter(
+          item => !loadedCategories.value.has(item.date),
+        )
 
-          if (yearData.items && Array.isArray(yearData.items)) {
-            // 过滤已加载的数据（避免重复）
-            const newItems = yearData.items.filter(
-              item => !loadedCategories.value.has(item.date),
-            )
+        if (newItems.length > 0) {
+          // 转换数据格式
+          const transformedItems = newItems.map((item, index) =>
+            transformBingWallpaper(item, wallpapers.value.length + index),
+          )
 
-            if (newItems.length > 0) {
-              // 转换数据格式
-              const transformedItems = newItems.map((item, index) =>
-                transformBingWallpaper(item, wallpapers.value.length + index),
-              )
+          // 标记已加载
+          newItems.forEach((item) => {
+            loadedCategories.value.add(item.date)
+          })
 
-              // 标记已加载
-              newItems.forEach((item) => {
-                loadedCategories.value.add(item.date)
-              })
+          // 合并并排序
+          const merged = [...wallpapers.value, ...transformedItems]
+          merged.sort((a, b) => b.date.localeCompare(a.date))
+          wallpapers.value = merged
 
-              // 再次检查系列是否已切换（在更新前）
-              if (currentLoadedSeries.value !== seriesId) {
-                return
-              }
-
-              // 渐进式更新：立即追加并排序
-              const merged = [...wallpapers.value, ...transformedItems]
-              merged.sort((a, b) => b.date.localeCompare(a.date))
-              wallpapers.value = merged
-            }
-          }
-
-          // 批次间暂停，让 UI 有时间响应
-          await delay(50)
-        }
-        catch (e) {
-          console.warn(`Failed to load year data ${yearInfo.file}:`, e)
+          // 更新计数
+          initialLoadedCount.value = wallpapers.value.length
+          expectedTotal.value = wallpapers.value.length
         }
       }
 
-      // 所有年度数据加载完成
-      if (currentLoadedSeries.value === seriesId) {
-        isBackgroundLoading.value = false
-        initialLoadedCount.value = wallpapers.value.length
-        // 保存到缓存，下次切换回来时直接使用
-        bingWallpapersCache.value = [...wallpapers.value]
-      }
+      // 标记年份已加载
+      loadedCategories.value.add(year.toString())
+
+      // 更新缓存
+      bingWallpapersCache.value = [...wallpapers.value]
     }
     catch (e) {
-      console.error('Background loading Bing data failed:', e)
-      isBackgroundLoading.value = false
+      console.warn(`Failed to load Bing year ${year}:`, e)
     }
   }
 
@@ -601,11 +646,14 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       return
     }
 
-    // 检查是否为 Bing 每日系列
+    // 检查是否为每日 Bing 系列
     const seriesConfig = SERIES_CONFIG[seriesId]
     if (seriesConfig?.isDaily) {
       return initBingSeries(seriesId, forceRefresh)
     }
+
+    // 递增请求版本号，用于防止竞态条件
+    const currentRequestVersion = ++requestVersion
 
     // 立即清空旧数据，避免切换系列时显示旧图片
     wallpapers.value = []
@@ -623,6 +671,11 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       // 1. 加载分类索引
       const indexData = await loadSeriesIndex(seriesId)
 
+      // 检查请求是否过期（用户已切换到其他系列）
+      if (requestVersion !== currentRequestVersion) {
+        return
+      }
+
       // 2. 记录预期总数（从索引文件中获取，用于显示）
       expectedTotal.value = indexData.total || 0
 
@@ -631,8 +684,26 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       const initialPromises = initialCategories.map(cat => loadCategory(seriesId, cat.file))
       const initialDataArrays = await Promise.all(initialPromises)
 
-      // 4. 立即显示前3个分类的数据
-      wallpapers.value = initialDataArrays.flat()
+      // 再次检查请求是否过期
+      if (requestVersion !== currentRequestVersion) {
+        return
+      }
+
+      // 4. 立即显示前3个分类的数据（预排序，确保数据层有序）
+      const initialData = initialDataArrays.flat()
+      initialData.sort((a, b) => {
+        // 按日期降序（最新优先）
+        const dateA = new Date(a.createdAt)
+        const dateB = new Date(b.createdAt)
+        const dateDiff = dateB - dateA
+
+        // 日期相同时按文件名排序，确保稳定性
+        if (dateDiff === 0) {
+          return a.filename.localeCompare(b.filename)
+        }
+        return dateDiff
+      })
+      wallpapers.value = initialData
 
       // 5. 记录已加载的分类
       initialCategories.forEach((cat) => {
@@ -650,8 +721,8 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       const remainingCategories = indexData.categories.slice(3)
       if (remainingCategories.length > 0) {
         isBackgroundLoading.value = true
-        // 后台加载，但不更新 wallpapers，而是收集完整数据后一次性更新
-        loadRemainingCategoriesSilently(seriesId, remainingCategories)
+        // 后台加载，传入请求版本号用于检查
+        loadRemainingCategoriesSilently(seriesId, remainingCategories, currentRequestVersion)
       }
       else {
         // 如果没有剩余分类，直接设置预期总数为实际数量
@@ -659,6 +730,10 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       }
     }
     catch (e) {
+      // 如果请求已过期，不处理错误
+      if (requestVersion !== currentRequestVersion) {
+        return
+      }
       console.error(`Failed to init series ${seriesId}:`, e)
       const errType = errorType.value || classifyError(e)
       errorType.value = errType
@@ -666,14 +741,20 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       wallpapers.value = []
     }
     finally {
-      loading.value = false
+      // 只有当请求未过期时才更新 loading 状态
+      if (requestVersion === currentRequestVersion) {
+        loading.value = false
+      }
     }
   }
 
   /**
    * 后台静默加载剩余分类（收集完整数据后一次性更新，避免数字递增）
+   * @param {string} seriesId - 系列 ID
+   * @param {Array} categories - 待加载的分类列表
+   * @param {number} expectedVersion - 期望的请求版本号，用于检测竞态条件
    */
-  async function loadRemainingCategoriesSilently(seriesId, categories) {
+  async function loadRemainingCategoriesSilently(seriesId, categories, expectedVersion) {
     try {
       // 批量加载：每次加载3个分类
       const BATCH_SIZE = 3
@@ -687,8 +768,8 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       const allRemainingData = []
 
       for (const batch of batches) {
-        // 检查系列是否已切换，如果切换则停止加载
-        if (currentLoadedSeries.value !== seriesId) {
+        // 检查请求版本号，如果已过期则停止加载
+        if (requestVersion !== expectedVersion) {
           return
         }
 
@@ -702,8 +783,8 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
           const batchPromises = unloadedBatch.map(cat => loadCategory(seriesId, cat.file))
           const batchResults = await Promise.all(batchPromises)
 
-          // 再次检查系列是否已切换（加载完成后）
-          if (currentLoadedSeries.value !== seriesId) {
+          // 再次检查请求版本号（加载完成后）
+          if (requestVersion !== expectedVersion) {
             return
           }
 
@@ -726,23 +807,44 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
       }
 
       // 所有后台数据加载完成后，一次性更新 wallpapers（避免数字递增）
-      if (currentLoadedSeries.value === seriesId && allRemainingData.length > 0) {
+      // 再次检查请求版本号，确保数据仍然有效
+      if (requestVersion === expectedVersion && allRemainingData.length > 0) {
         // 先关闭后台加载标记，再更新数据
         // 这样 displayTotal 会立即显示完整数量，不会出现中间状态
         isBackgroundLoading.value = false
-        // 一次性追加所有剩余数据
-        wallpapers.value = [...wallpapers.value, ...allRemainingData]
+
+        // 合并数据并按日期+文件名排序，确保数据层有序
+        // 这样 UI 层排序时结果稳定，不会导致图片跳动
+        const merged = [...wallpapers.value, ...allRemainingData]
+        merged.sort((a, b) => {
+          // 按日期降序（最新优先）
+          const dateA = new Date(a.createdAt)
+          const dateB = new Date(b.createdAt)
+          const dateDiff = dateB - dateA
+
+          // 日期相同时按文件名排序，确保稳定性
+          if (dateDiff === 0) {
+            return a.filename.localeCompare(b.filename)
+          }
+          return dateDiff
+        })
+
+        wallpapers.value = merged
         // 更新初始加载数量（现在显示完整数量）
         initialLoadedCount.value = wallpapers.value.length
       }
-      else {
-        // 如果没有数据或系列已切换，也要关闭后台加载标记
+      else if (requestVersion === expectedVersion) {
+        // 如果没有数据但请求仍有效，也要关闭后台加载标记
         isBackgroundLoading.value = false
       }
+      // 如果请求已过期，不做任何操作
     }
     catch (e) {
-      console.error('Background loading failed:', e)
-      isBackgroundLoading.value = false
+      // 只有请求未过期时才处理错误
+      if (requestVersion === expectedVersion) {
+        console.error('Background loading failed:', e)
+        isBackgroundLoading.value = false
+      }
     }
   }
 
@@ -876,11 +978,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     if (seriesId) {
       // 清除指定系列的缓存
       delete seriesIndexCache.value[seriesId]
-      Object.keys(categoryCache.value).forEach((key) => {
-        if (key.startsWith(`${seriesId}:`)) {
-          delete categoryCache.value[key]
-        }
-      })
+      categoryCache.deleteByPrefix(`${seriesId}:`)
       // 清除 Bing 缓存
       if (seriesId === 'bing') {
         bingWallpapersCache.value = null
@@ -889,7 +987,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     else {
       // 清除所有缓存
       seriesIndexCache.value = {}
-      categoryCache.value = {}
+      categoryCache.clear()
       bingWallpapersCache.value = null
     }
   }
@@ -912,6 +1010,7 @@ export const useWallpaperStore = defineStore('wallpaper', () => {
     initSeries,
     loadAllCategories,
     loadCategory,
+    loadBingYear,
     getWallpaperById,
     getWallpaperIndex,
     getPrevWallpaper,

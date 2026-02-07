@@ -6,7 +6,14 @@
 // - 本地开发：使用此默认值
 // - 线上构建：GitHub Actions 会自动替换为图床最新 tag
 // - jsdelivr 缓存策略：@main 分支有缓存，@tag 版本无缓存
-export const CDN_VERSION = 'v1.1.12'
+export const CDN_VERSION = 'v1.1.29'
+
+// 前端应用版本号（构建时由 vite 注入，用于缓存控制）
+// eslint-disable-next-line no-undef
+export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'
+
+// 数据请求版本参数（使用 CDN_VERSION 破坏缓存，确保图床更新后数据同步刷新）
+export const DATA_CACHE_BUSTER = `?v=${CDN_VERSION}`
 
 // CDN URL 动态构建（防止静态分析提取完整链接）
 const _cdnParts = {
@@ -30,11 +37,11 @@ export const SERIES_CONFIG = {
     icon: 'monitor',
     imageBaseUrl: `${CDN_BASE}/wallpaper/desktop`,
     thumbnailBaseUrl: `${CDN_BASE}/thumbnail/desktop`,
-    // 新架构：指向分类索引文件
-    indexUrl: `${import.meta.env.BASE_URL}data/desktop/index.json`,
+    // 新架构：指向分类索引文件（带版本参数防缓存）
+    indexUrl: `${import.meta.env.BASE_URL}data/desktop/index.json${DATA_CACHE_BUSTER}`,
     // 向后兼容：保留旧的 dataUrl（如需回退）
-    dataUrl: `${import.meta.env.BASE_URL}data/desktop.json`,
-    // 分类数据目录
+    dataUrl: `${import.meta.env.BASE_URL}data/desktop.json${DATA_CACHE_BUSTER}`,
+    // 分类数据目录（动态拼接时需手动添加版本参数）
     categoryBaseUrl: `${import.meta.env.BASE_URL}data/desktop`,
     aspectRatio: '16/10',
   },
@@ -44,11 +51,11 @@ export const SERIES_CONFIG = {
     icon: 'smartphone',
     imageBaseUrl: `${CDN_BASE}/wallpaper/mobile`,
     thumbnailBaseUrl: `${CDN_BASE}/thumbnail/mobile`,
-    // 新架构：指向分类索引文件
-    indexUrl: `${import.meta.env.BASE_URL}data/mobile/index.json`,
+    // 新架构：指向分类索引文件（带版本参数防缓存）
+    indexUrl: `${import.meta.env.BASE_URL}data/mobile/index.json${DATA_CACHE_BUSTER}`,
     // 向后兼容：保留旧的 dataUrl（如需回退）
-    dataUrl: `${import.meta.env.BASE_URL}data/mobile.json`,
-    // 分类数据目录
+    dataUrl: `${import.meta.env.BASE_URL}data/mobile.json${DATA_CACHE_BUSTER}`,
+    // 分类数据目录（动态拼接时需手动添加版本参数）
     categoryBaseUrl: `${import.meta.env.BASE_URL}data/mobile`,
     aspectRatio: '9/16',
   },
@@ -58,11 +65,11 @@ export const SERIES_CONFIG = {
     icon: 'user',
     imageBaseUrl: `${CDN_BASE}/wallpaper/avatar`,
     thumbnailBaseUrl: `${CDN_BASE}/thumbnail/avatar`,
-    // 新架构：指向分类索引文件
-    indexUrl: `${import.meta.env.BASE_URL}data/avatar/index.json`,
+    // 新架构：指向分类索引文件（带版本参数防缓存）
+    indexUrl: `${import.meta.env.BASE_URL}data/avatar/index.json${DATA_CACHE_BUSTER}`,
     // 向后兼容：保留旧的 dataUrl（如需回退）
-    dataUrl: `${import.meta.env.BASE_URL}data/avatar.json`,
-    // 分类数据目录
+    dataUrl: `${import.meta.env.BASE_URL}data/avatar.json${DATA_CACHE_BUSTER}`,
+    // 分类数据目录（动态拼接时需手动添加版本参数）
     categoryBaseUrl: `${import.meta.env.BASE_URL}data/avatar`,
     aspectRatio: '1/1',
   },
@@ -75,9 +82,10 @@ export const SERIES_CONFIG = {
     bingCdnBase: 'https://cn.bing.com',
     // 本地 4K 原图基础路径
     imageBaseUrl: `${CDN_BASE}/bing`,
-    // 元数据 API
-    indexUrl: `${import.meta.env.BASE_URL}data/bing/index.json`,
-    latestUrl: `${import.meta.env.BASE_URL}data/bing/latest.json`,
+    // 元数据 API（带版本参数防缓存）
+    indexUrl: `${import.meta.env.BASE_URL}data/bing/index.json${DATA_CACHE_BUSTER}`,
+    latestUrl: `${import.meta.env.BASE_URL}data/bing/latest.json${DATA_CACHE_BUSTER}`,
+    // 年度数据目录（动态拼接时需手动添加版本参数）
     yearBaseUrl: `${import.meta.env.BASE_URL}data/bing`,
     aspectRatio: '16/9',
     isDaily: true,
@@ -154,6 +162,16 @@ export const RESOLUTION_THRESHOLDS = [
   { minWidth: 1920, label: '超清', type: 'primary' },
   { minWidth: 1280, label: '高清', type: 'secondary' },
   { minWidth: 0, label: '标清', type: 'secondary' },
+]
+
+// 分辨率筛选选项（基于 RESOLUTION_THRESHOLDS 生成，用于 FilterPanel）
+export const RESOLUTION_OPTIONS = [
+  { value: 'all', label: '全部分辨率' },
+  ...RESOLUTION_THRESHOLDS.map(t => ({
+    value: t.label,
+    label: t.label,
+    minWidth: t.minWidth,
+  })),
 ]
 
 // 主题

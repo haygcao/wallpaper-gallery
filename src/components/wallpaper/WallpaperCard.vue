@@ -56,6 +56,8 @@ const useProxy = ref(false)
 
 // 定时器引用（用于组件卸载时清理）
 let cacheCheckTimer = null
+// GSAP 动画目标引用（用于组件卸载时清理）
+let gsapTargets = []
 
 // 根据系列类型智能选择显示URL：
 // - mobile 系列使用 previewUrl（1080px 预览图，更清晰适合长屏）
@@ -81,11 +83,22 @@ onMounted(() => {
   }, 0)
 })
 
-// 组件卸载时清除定时器
+// 组件卸载时清除定时器和 GSAP 动画
 onUnmounted(() => {
   if (cacheCheckTimer) {
     clearTimeout(cacheCheckTimer)
     cacheCheckTimer = null
+  }
+
+  // 清理所有 GSAP 动画，防止内存泄漏
+  if (gsapTargets.length > 0) {
+    gsapTargets.forEach(target => gsap.killTweensOf(target))
+    gsapTargets = []
+  }
+
+  // 清理卡片本身的动画
+  if (cardRef.value) {
+    gsap.killTweensOf(cardRef.value)
   }
 })
 
@@ -98,8 +111,23 @@ const fileFormat = computed(() => {
 // 相对时间（如"3天前"）
 const relativeTime = computed(() => formatRelativeTime(props.wallpaper.createdAt))
 
-// 显示用的文件名（去除分类前缀）
-const displayFilename = computed(() => getDisplayFilename(props.wallpaper.filename))
+// 显示用的文件名（优先使用 AI 生成的 displayTitle）
+const displayFilename = computed(() => {
+  // 优先使用 AI 生成的标题
+  if (props.wallpaper.displayTitle) {
+    // 去除常见的图片格式后缀名
+    return props.wallpaper.displayTitle.replace(/\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|tif|ico|heic|heif)$/i, '')
+  }
+  return getDisplayFilename(props.wallpaper.filename)
+})
+
+// AI 关键词标签（显示前 3 个）
+const aiKeywords = computed(() => {
+  if (!props.wallpaper.keywords || props.wallpaper.keywords.length === 0) {
+    return []
+  }
+  return props.wallpaper.keywords.slice(0, 3)
+})
 
 // 高亮文件名（对显示名称进行高亮）
 const highlightedFilename = computed(() => {
@@ -195,6 +223,9 @@ function handleMouseEnter(e) {
   const overlay = card.querySelector('.card-overlay')
   const img = card.querySelector('.card-image img')
 
+  // 记录动画目标，便于清理
+  gsapTargets = [card, overlay, img].filter(Boolean)
+
   gsap.to(card, {
     y: -10,
     boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
@@ -230,6 +261,8 @@ function handleMouseLeave(e) {
     boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
     duration: 0.3,
     ease: 'power2.out',
+    // 动画完成后清除内联样式，减少内存占用
+    clearProps: 'transform',
   })
 
   gsap.to(overlay, {
@@ -242,6 +275,8 @@ function handleMouseLeave(e) {
       scale: 1,
       duration: 0.4,
       ease: 'power2.out',
+      // 动画完成后清除内联样式
+      clearProps: 'transform',
     })
   }
 }
@@ -289,6 +324,7 @@ function handleMouseLeave(e) {
         width="800"
         height="600"
         loading="lazy"
+        :fetchpriority="index < 6 ? 'high' : 'auto'"
         :class="{ 'is-loaded': imageLoaded, 'is-error': imageError }"
         @load="handleImageLoad"
         @error="handleImageError"
@@ -362,13 +398,29 @@ function handleMouseLeave(e) {
 
       <!-- 普通壁纸信息展示 -->
       <template v-else>
-        <!-- 第一行：文件名 -->
-        <p class="card-filename" :title="displayFilename">
-          <template v-for="(part, idx) in highlightedFilename" :key="idx">
-            <span v-if="part.highlight" class="highlight">{{ part.text }}</span>
-            <span v-else>{{ part.text }}</span>
-          </template>
-        </p>
+        <!-- 第一行：文件名 (AI 标题优先) + AI 标识 -->
+        <div class="card-filename-row">
+          <p class="card-filename" :title="displayFilename">
+            <template v-for="(part, idx) in highlightedFilename" :key="idx">
+              <span v-if="part.highlight" class="highlight">{{ part.text }}</span>
+              <span v-else>{{ part.text }}</span>
+            </template>
+          </p>
+          <!-- AI 标识 -->
+          <!-- <span v-if="hasAiInfo" class="ai-badge" title="AI 智能分析">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M9 3L5 7l4 4m6-8l4 4-4 4M13 21l-2-8-2 8" />
+            </svg>
+          </span> -->
+        </div>
+
+        <!-- AI 关键词标签 -->
+        <div v-if="aiKeywords.length > 0" class="card-ai-keywords">
+          <span v-for="keyword in aiKeywords" :key="keyword" class="ai-keyword-tag">
+            {{ keyword }}
+          </span>
+        </div>
+
         <!-- 分类信息 -->
         <div v-if="categoryDisplay" class="card-category">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -409,22 +461,48 @@ function handleMouseLeave(e) {
 <style lang="scss" scoped>
 .wallpaper-card {
   position: relative;
-  background: var(--color-bg-card);
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08));
+  border: 1px solid rgba(102, 126, 234, 0.15);
   border-radius: var(--radius-lg);
   overflow: hidden;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  // 多层阴影创建立体感
+  box-shadow:
+    0 2px 4px rgba(102, 126, 234, 0.08),
+    0 4px 12px rgba(102, 126, 234, 0.12),
+    0 8px 24px rgba(102, 126, 234, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
   // 使用 backface-visibility 创建新的合成层，避免动画后的布局抖动
   backface-visibility: hidden;
-  // 添加过渡效果，让圆角变化更平滑
-  transition: border-radius 0.4s ease;
+  // 添加过渡效果（排除 transform/opacity，由 GSAP 控制）
+  transition:
+    background 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    border-radius 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+
+  // Hover 效果
+  &:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.12), rgba(118, 75, 162, 0.12));
+    border-color: rgba(102, 126, 234, 0.3);
+    // Hover 时阴影更强，立体感更明显
+    box-shadow:
+      0 4px 8px rgba(102, 126, 234, 0.12),
+      0 8px 20px rgba(102, 126, 234, 0.15),
+      0 16px 32px rgba(102, 126, 234, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    transform: translateY(-4px);
+  }
 
   // 移动端瀑布流和网格视图更紧凑的圆角
   @include mobile-only {
     &.view-grid,
     &.view-masonry {
       border-radius: var(--radius-sm);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      box-shadow:
+        0 1px 3px rgba(102, 126, 234, 0.08),
+        0 2px 8px rgba(102, 126, 234, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
     }
   }
 }
@@ -559,7 +637,7 @@ function handleMouseLeave(e) {
   height: 56px;
   background: rgba(255, 255, 255, 0.2);
   border-radius: $radius-full;
-  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
 
   svg {
     width: 28px;
@@ -585,14 +663,22 @@ function handleMouseLeave(e) {
   }
 }
 
+.card-filename-row {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  margin-bottom: $spacing-xs;
+}
+
 .card-filename {
+  flex: 1;
   font-size: $font-size-sm;
   font-weight: $font-weight-medium;
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: $spacing-xs;
+  margin-bottom: 0;
 
   .highlight {
     background: rgba(229, 62, 62, 0.1);
@@ -600,6 +686,50 @@ function handleMouseLeave(e) {
     font-weight: $font-weight-semibold;
     padding: 1px 4px;
     border-radius: 3px;
+  }
+}
+
+// AI 标识徽章
+// .ai-badge {
+//   display: flex;
+//   align-items: center;
+//   justify-content: center;
+//   flex-shrink: 0;
+//   width: 18px;
+//   height: 18px;
+//   background: linear-gradient(135deg, #667eea, #764ba2);
+//   color: white;
+//   border-radius: $radius-sm;
+//   cursor: help;
+
+//   svg {
+//     width: 11px;
+//     height: 11px;
+//   }
+// }
+
+// AI 关键词标签
+.card-ai-keywords {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: $spacing-xs;
+}
+
+.ai-keyword-tag {
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: $font-weight-medium;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+  color: #667eea;
+  border-radius: $radius-sm;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  white-space: nowrap;
+
+  [data-theme='dark'] & {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2));
+    border-color: rgba(102, 126, 234, 0.3);
   }
 }
 
@@ -637,8 +767,7 @@ function handleMouseLeave(e) {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.75);
   color: white;
   font-size: 10px;
   font-weight: $font-weight-medium;
@@ -693,11 +822,18 @@ function handleMouseLeave(e) {
 }
 
 .meta-format {
-  padding: 2px 6px;
-  background: var(--color-bg-hover);
+  padding: 3px 8px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
+  color: #667eea;
   border-radius: $radius-sm;
-  font-weight: $font-weight-medium;
+  font-weight: $font-weight-semibold;
   font-size: 10px;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+
+  [data-theme='dark'] & {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.25) 0%, rgba(118, 75, 162, 0.25) 100%);
+    border-color: rgba(102, 126, 234, 0.3);
+  }
 }
 
 .meta-views {
@@ -780,7 +916,7 @@ function handleMouseLeave(e) {
 }
 
 // ========================================
-// Bing 壁纸专用样式
+// Bing 壁纸专用样式（高级感设计）
 // ========================================
 
 // Bing 日期标签（移动端图片上，使用 CSS 媒体查询控制显示避免 CLS）
@@ -792,13 +928,16 @@ function handleMouseLeave(e) {
   display: none; // 默认隐藏
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
-  background: linear-gradient(135deg, #0078d4, #106ebe);
+  padding: 5px 10px;
+  background: linear-gradient(135deg, rgba(0, 120, 212, 0.95), rgba(16, 110, 190, 0.95));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: white;
   font-size: 11px;
   font-weight: $font-weight-semibold;
-  border-radius: $radius-sm;
-  box-shadow: 0 2px 8px rgba(0, 120, 212, 0.3);
+  border-radius: $radius-md;
+  box-shadow: 0 2px 12px rgba(0, 120, 212, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 
   // 仅移动端显示（使用媒体查询避免 CLS）
   @include mobile-only {
@@ -814,13 +953,14 @@ function handleMouseLeave(e) {
 // Bing 标题样式
 .card-bing-title {
   font-size: $font-size-sm;
-  font-weight: $font-weight-semibold;
+  font-weight: $font-weight-bold;
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: $spacing-xs;
-  line-height: 1.4;
+  margin-bottom: $spacing-sm;
+  line-height: 1.5;
+  letter-spacing: 0.2px;
 }
 
 // Bing 元信息（日期 + 分辨率）
@@ -828,16 +968,26 @@ function handleMouseLeave(e) {
   display: flex;
   align-items: center;
   gap: $spacing-sm;
-  margin-bottom: $spacing-xs;
+  margin-bottom: $spacing-sm;
   font-size: $font-size-xs;
-  color: var(--color-text-secondary);
 
   .bing-date {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
+    padding: 4px 10px;
+    background: linear-gradient(135deg, rgba(0, 120, 212, 0.12), rgba(16, 110, 190, 0.08));
     color: #0078d4;
-    font-weight: $font-weight-medium;
+    font-weight: $font-weight-semibold;
+    border-radius: $radius-md;
+    border: 1px solid rgba(0, 120, 212, 0.15);
+    transition: all 0.2s ease;
+
+    [data-theme='dark'] & {
+      background: linear-gradient(135deg, rgba(0, 120, 212, 0.25), rgba(16, 110, 190, 0.2));
+      border-color: rgba(0, 120, 212, 0.3);
+      color: #4da6ff;
+    }
 
     svg {
       width: 12px;
@@ -846,12 +996,14 @@ function handleMouseLeave(e) {
   }
 
   .bing-resolution {
-    padding: 2px 8px;
+    padding: 4px 10px;
     background: linear-gradient(135deg, #10b981, #059669);
     color: white;
     font-size: 10px;
     font-weight: $font-weight-bold;
-    border-radius: $radius-full;
+    border-radius: $radius-md;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
+    letter-spacing: 0.5px;
   }
 }
 
@@ -859,20 +1011,30 @@ function handleMouseLeave(e) {
 .card-bing-copyright {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: $font-size-xs;
-  color: var(--color-text-muted);
+  gap: 5px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: $radius-md;
+  margin-top: 2px;
+
+  [data-theme='dark'] & {
+    background: rgba(255, 255, 255, 0.05);
+  }
 
   svg {
     width: 12px;
     height: 12px;
     flex-shrink: 0;
+    color: var(--color-text-muted);
   }
 
   span {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: 1.3;
   }
 }
 </style>

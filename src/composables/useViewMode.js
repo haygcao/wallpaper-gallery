@@ -6,25 +6,25 @@ import { ref } from 'vue'
 import { trackViewModeChange } from '@/utils/analytics'
 import { STORAGE_KEYS } from '@/utils/constants'
 
-// 简单的移动端检测（用于初始默认值）
-function isMobileDevice() {
+// 简单的移动端检测（用于初始默认值，包括平板）
+function isMobileOrTabletDevice() {
   if (typeof window === 'undefined')
     return false
-  return window.innerWidth < 768
+  return window.innerWidth < 1024 // 手机+平板都算移动端
 }
 
 // 获取默认视图模式
 function getDefaultViewMode() {
   const stored = localStorage.getItem(STORAGE_KEYS.VIEW_MODE)
   if (stored) {
-    // 如果是移动端且存储的是 grid，则使用 masonry
-    if (isMobileDevice() && stored === 'grid') {
-      return 'masonry'
+    // 如果是移动端且存储的是 masonry，则使用 grid（移动端不再支持瀑布流）
+    if (isMobileOrTabletDevice() && stored === 'masonry') {
+      return 'grid'
     }
     return stored
   }
-  // 没有存储值时，移动端默认 masonry，桌面端默认 grid
-  return isMobileDevice() ? 'masonry' : 'grid'
+  // 没有存储值时，默认都使用 grid
+  return 'grid'
 }
 
 const viewMode = ref(getDefaultViewMode())

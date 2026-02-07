@@ -156,8 +156,13 @@
     <link rel="dns-prefetch" href="https://unpkg.com" />
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
+    <link rel="preconnect" href="https://cn.bing.com" crossorigin />
+    <link rel="dns-prefetch" href="https://cn.bing.com" />
+    <link rel="preconnect" href="https://wsrv.nl" crossorigin />
+    <link rel="dns-prefetch" href="https://wsrv.nl" />
 
     <!-- Import Map: 映射裸模块说明符到 CDN (使用 unpkg - Cloudflare CDN，国内访问更稳定) -->
+    <!-- 生产环境使用 UMD 全局变量模式，开发环境使用 Import Map -->
     <script type="importmap">
       {
         "imports": {
@@ -235,27 +240,22 @@
 
     <!-- GitHub Pages SPA 路由恢复脚本 -->
     <script>
-      ;(function (l) {
-        if (l.search[1] === '/') {
-          var decoded = l.search
-            .slice(1)
-            .split('&')
-            .map(function (s) {
-              return s.replace(/~and~/g, '&')
-            })
-            .join('?')
-          window.history.replaceState(null, null, l.pathname.slice(0, -1) + decoded + l.hash)
+      ;(function () {
+        var redirect = sessionStorage.getItem('redirect')
+        if (redirect) {
+          sessionStorage.removeItem('redirect')
+          window.history.replaceState(null, null, redirect)
         }
-      })(window.location)
+      })()
     </script>
   </head>
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
-    <script
+    <!-- <script
       defer
       src="https://static.cloudflareinsights.com/beacon.min.js"
       data-cf-beacon='{"token": "be0503caf5e74f2ab1defc7b3ec1f3d6"}'
-    ></script>
+    ></script> -->
   </body>
 </html>

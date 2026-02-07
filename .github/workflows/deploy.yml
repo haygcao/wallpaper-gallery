@@ -5,13 +5,14 @@ on:
   push:
     branches: [main]
 
-  # 定时触发：每天 UTC 0:00（北京时间 8:00）自动同步壁纸数据
+  # 定时触发：每天 UTC 18:00（北京时间次日 02:00）- 低峰期,图床同步后 2 小时部署
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 18 * * *'
 
   # 手动触发
   workflow_dispatch:
 
+# 设置 GITHUB_TOKEN 权限
 # 设置 GITHUB_TOKEN 权限
 permissions:
   contents: read
@@ -64,39 +65,7 @@ jobs:
         with:
           repository: IT-NuanxinPro/nuanXinProPic
           path: nuanXinProPic
-          fetch-depth: 0  # 获取完整历史，用于恢复时间戳
-
-      - name: Restore file timestamps from backup
-        run: |
-          cd nuanXinProPic
-
-          # 优先使用完整备份文件（包含所有三个系列）
-          if [ -f "timestamps-backup-all.txt" ]; then
-            echo "✅ Found timestamps-backup-all.txt, restoring all file timestamps..."
-
-            # 使用完整备份文件恢复时间戳
-            chmod +x scripts/restore-timestamps.sh
-            BACKUP_FILE=timestamps-backup-all.txt ./scripts/restore-timestamps.sh
-
-            echo "✅ All file timestamps restored from backup"
-          elif [ -f "timestamps-backup.txt" ]; then
-            echo "✅ Found timestamps-backup.txt, restoring desktop file timestamps..."
-
-            # 使用旧的备份文件（仅 desktop）
-            chmod +x scripts/restore-timestamps.sh
-            ./scripts/restore-timestamps.sh
-
-            echo "✅ Desktop file timestamps restored from backup"
-          else
-            echo "⚠️ No timestamps backup file found, skipping timestamp restoration"
-          fi
-
-          # 验证：显示几个文件的时间
-          echo "📅 Sample file timestamps:"
-          echo "Desktop:"
-          ls -lh wallpaper/desktop/动漫/二次元/ 2>/dev/null | head -3 || echo "Desktop directory not found"
-          echo "Mobile:"
-          ls -lh wallpaper/mobile/动漫/ 2>/dev/null | head -3 || echo "Mobile directory not found"
+          fetch-depth: 1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -112,13 +81,47 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install ImageMagick (for image dimensions)
-        run: sudo apt-get update && sudo apt-get install -y imagemagick
+      - name: Copy data from image repository
+        run: |
+          # 复制图床仓库中已生成的 data 目录
+          # 这些数据由 workflow 的 process-metadata.js 生成，包含 AI 元数据
+          # 注意：只复制 desktop/mobile/avatar，不覆盖 stats（热门数据）
+          mkdir -p public/data
+          if [ -d "nuanXinProPic/data" ]; then
+            echo "📦 Copying data from nuanXinProPic/data..."
+            
+            # 只复制特定系列，避免覆盖 stats
+            for series in desktop mobile avatar; do
+              if [ -d "nuanXinProPic/data/$series" ]; then
+                echo "  Copying $series..."
+                cp -r "nuanXinProPic/data/$series" public/data/
+              fi
+              if [ -f "nuanXinProPic/data/$series.json" ]; then
+                echo "  Copying $series.json..."
+                cp "nuanXinProPic/data/$series.json" public/data/
+              fi
+            done
+            
+            echo "✅ Data copied successfully"
 
-      - name: Generate wallpaper data
-        run: node scripts/generate-data.js
+            # 复制 Bing 数据（Bing 使用独立的 meta 目录）
+            if [ -d "nuanXinProPic/bing/meta" ]; then
+              echo "📦 Copying Bing data from nuanXinProPic/bing/meta..."
+              mkdir -p public/data/bing
+              cp -r nuanXinProPic/bing/meta/* public/data/bing/
+              echo "✅ Bing data copied successfully"
+            fi
+
+            ls -la public/data/
+          else
+            echo "⚠️ nuanXinProPic/data not found, running generate-data.js as fallback"
+            pnpm generate
+          fi
 
       - name: Build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: pnpm build
 
       - name: Setup Pages
@@ -141,3 +144,22 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Purge Cloudflare cache
+        if: success()
+        run: |
+          echo "🧹 Purging Cloudflare cache..."
+
+          # 清除关键文件缓存（index.html 和 version.json）
+          RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"files":["https://wallpaper.061129.xyz/","https://wallpaper.061129.xyz/index.html","https://wallpaper.061129.xyz/version.json"]}')
+
+          # 检查响应
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "✅ Successfully purged version.json cache"
+          else
+            echo "⚠️ Cache purge response: $RESPONSE"
+          fi
